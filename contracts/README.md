@@ -66,8 +66,8 @@ VITE_CONFIPOOL_VAULT_ADDRESS=0x...
 |---|---|
 | Vault | [`0x0b5F0c7a3f9E5c5124E6B08c70EcdAb74395225c`](https://sepolia.etherscan.io/address/0x0b5F0c7a3f9E5c5124E6B08c70EcdAb74395225c) |
 | Deploy tx | [`0x5ab28ce9…5d5f8a29`](https://sepolia.etherscan.io/tx/0x5ab28ce98560cc8f9ed48f6cd1c0f086cbc8f864863b721050afc6f35d5f8a29) |
-| Owner / admin | `0xcC25AcC8120046A3a89431558ab4E6fAE935EcF1` |
-| Draw interval | 300s |
+| Owner / admin | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
+| Deposit window / draw delay | 120s / 180s |
 
 Read live vault state (owner, tokens, draw count, reserve flags) without a wallet:
 

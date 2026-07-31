@@ -31,23 +31,23 @@ Depositors always deposit **one asset (cUSDC)**. Morpho “exposures” (cbBTC /
 | MockYield4626 | [`0x66E44187855FFaA0baD1092A5B98EdAbCF3aaf5a`](https://sepolia.etherscan.io/address/0x66E44187855FFaA0baD1092A5B98EdAbCF3aaf5a) |
 | USDC Mock (faucet) | [`0x9b5Cd13b8eFbB58Dc25A05CF411D8056058aDFfF`](https://sepolia.etherscan.io/address/0x9b5Cd13b8eFbB58Dc25A05CF411D8056058aDFfF) |
 | cUSDCMock | [`0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639`](https://sepolia.etherscan.io/address/0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639) |
-| Admin / owner | `0xcC25AcC8120046A3a89431558ab4E6fAE935EcF1` |
+| Admin / owner (demo) | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
 
-Draw interval **5 minutes** · prize share **80%** of each harvest · deploy block **`11389975`**.  
-Full JSON: [`contracts/deployments/sepolia.json`](./contracts/deployments/sepolia.json).
+Deposit window **2 minutes** · draw **3 minutes** after window closes · prize share **80%** of each harvest.  
+Live vault JSON: [`contracts/deployments/sepolia.json`](./contracts/deployments/sepolia.json) (redeploy with the demo admin key below before public review).
 
 ---
 
 ## Demo admin wallet (for reviewers)
 
-Import this **Sepolia-only** key into MetaMask / Rabby so you unlock the Admin and Yield admin controls. Do **not** send mainnet funds to it.
+Import this **Sepolia-only** key into MetaMask / Rabby so you unlock Admin controls and can run the keeper. Do **not** send mainnet funds to it.
 
 | | |
 |--|--|
-| Address | `0xcC25AcC8120046A3a89431558ab4E6fAE935EcF1` |
-| Private key | `0xccc45d818dc9a747db3229ab7c034bfe0c46cdb2aded21d08ca0d052682ce114` |
+| Address | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
+| Private key | `0x35273d0406fb4ffc60439748ba596225a7b396d03ac5ae2d328b26fd7c944431` |
 
-You still need a little Sepolia ETH on that wallet for gas. The USDC faucet is in the app (Pool → Use faucet).
+Fund this wallet with Sepolia ETH for gas, then use it as `PRIVATE_KEY` / `OWNER_PRIVATE_KEY` when redeploying the vault and running the Railway indexer+keeper. The USDC faucet is in the app (Pool → Use faucet).
 
 ---
 
