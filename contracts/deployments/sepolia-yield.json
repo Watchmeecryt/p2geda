@@ -3,14 +3,14 @@
   "network": "sepolia",
   "deployer": "0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9",
   "demoAdmin": "0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9",
-  "vault": "0x5c9983B2517e1Cf3510B2a1912d931C1a427F5Aa",
-  "yieldVault": "0x58A081CEBb06549E8EF4125E033F5bB05eeB3dEb",
+  "vault": "0xB92cAaBca6641E8EA43FCB2804d2f8D113dA393A",
+  "yieldVault": "0xF43FC2c271E366aFC2eC84213a3AC5543098Bc43",
   "underlyingToken": "0x9b5Cd13b8eFbB58Dc25A05CF411D8056058aDFfF",
   "confidentialToken": "0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639",
   "depositWindow": 120,
-  "drawInterval": 180,
+  "drawInterval": 240,
   "yieldAprBps": 8000,
-  "deploymentBlock": 11392011,
-  "deployedAt": "2026-07-31T21:25:48.838Z",
-  "note": "Owned by demo admin 0xf2fa17…. Deposit window 120s, draw 180s after close."
+  "deploymentBlock": 11392191,
+  "deployedAt": "2026-07-31T22:00:00.000Z",
+  "note": "Deposit window 120s, draw 240s after close. Keeper sizes prize as 80% of full reserve at draw time."
 }

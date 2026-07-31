@@ -68,6 +68,8 @@ contract ConfidentialPrizeVault is
     /// @notice Pending unwrap request used by the allocate flow.
     bytes32 public pendingAllocateUnwrapId;
     bytes32 public lastTotalPrincipalRevealHandle;
+    /// @notice Last handle made publicly decryptable for `_prizeReserve` (keeper sizes draw prize).
+    bytes32 public lastPrizeReserveRevealHandle;
     /// @notice Share of each harvested yield that becomes prize-per-draw (rest stays encrypted
     ///         in `_prizeReserve` as padding so clear harvest ≠ draw prize ≠ winner claim).
     ///         Default 8000 = 80% paid per draw; 20% remains in the encrypted reserve.
@@ -344,9 +346,9 @@ contract ConfidentialPrizeVault is
         emit TotalPrizesPaidRevealRequested(drawsCompleted, handle);
     }
 
-    /// @notice Fraction of each harvested yield paid as prize-per-draw.
-    /// @dev Keeper encrypts 100% of clear harvest into `_prizeReserve`, then sets prize-per-draw
-    ///      to this fraction. The remainder stays encrypted in the reserve as anonymity padding.
+    /// @notice Fraction of the encrypted prize reserve paid as prize-per-draw.
+    /// @dev Keeper funds 100% of each clear harvest into `_prizeReserve`, then before each
+    ///      draw reveals the reserve and sets prize-per-draw to this fraction of the pot.
     function setPrizeShareBps(uint16 bps) external onlyOwner {
         if (bps == 0 || bps > 10_000) revert InvalidPrizeShareBps();
         prizeShareBps = bps;
@@ -370,6 +372,16 @@ contract ConfidentialPrizeVault is
         FHE.makePubliclyDecryptable(_totalPrincipal);
         lastTotalPrincipalRevealHandle = handle;
         emit TotalPrincipalRevealRequested(handle);
+    }
+
+    /// @notice Make `_prizeReserve` publicly decryptable so the keeper can size prize-per-draw.
+    /// @dev Leaks aggregate reserve only — not the winner or per-user amounts.
+    function requestPrizeReserveReveal() external onlyOwner returns (bytes32 handle) {
+        handle = euint64.unwrap(_prizeReserve);
+        if (handle == lastPrizeReserveRevealHandle) revert RevealAlreadyRequested(handle);
+        FHE.makePubliclyDecryptable(_prizeReserve);
+        lastPrizeReserveRevealHandle = handle;
+        emit PrizeReserveRevealRequested(handle);
     }
 
     /// @notice Emergency/ops bridge only: owner supplies clear underlying without unwrapping vault cUSDCMock.

@@ -17,6 +17,7 @@ interface IConfidentialPrizeVault {
     event YieldHarvested(uint256 underlyingAmount);
     event YieldRedeemed(uint256 underlyingAmount, uint256 totalAllocated);
     event TotalPrincipalRevealRequested(bytes32 indexed handle);
+    event PrizeReserveRevealRequested(bytes32 indexed handle);
     event PrizeShareBpsUpdated(uint16 bps);
     event DepositWindowOpened(uint256 indexed opensAt, uint256 indexed closesAt);
     event DepositWindowReset(uint256 indexed drawId);
@@ -35,6 +36,7 @@ interface IConfidentialPrizeVault {
     function yieldVault() external view returns (address);
     function allocatedUnderlying() external view returns (uint256);
     function prizeShareBps() external view returns (uint16);
+    function lastPrizeReserveRevealHandle() external view returns (bytes32);
 
     function confidentialBalanceOf(address account) external view returns (euint64);
     function confidentialClaimableOf(address account) external view returns (euint64);
@@ -47,6 +49,7 @@ interface IConfidentialPrizeVault {
     function setPrizeShareBps(uint16 bps) external;
     function setYieldVault(address yieldVault_) external;
     function requestTotalPrincipalReveal() external returns (bytes32);
+    function requestPrizeReserveReveal() external returns (bytes32);
     function bootstrapAllocate(uint256 underlyingAmount) external;
     function requestAllocate(externalEuint64 encryptedAmount, bytes calldata inputProof) external returns (bytes32);
     function finalizeAllocate(uint64 unwrapAmountCleartext, bytes calldata decryptionProof) external returns (uint256);

@@ -58,7 +58,9 @@ const VAULT_ABI = parseAbi([
   'function confidentialToken() view returns (address)',
   'function underlyingToken() view returns (address)',
   'function confidentialTotalPrincipal() view returns (bytes32)',
+  'function confidentialPrizeReserve() view returns (bytes32)',
   'function lastTotalPrincipalRevealHandle() view returns (bytes32)',
+  'function lastPrizeReserveRevealHandle() view returns (bytes32)',
   'function pendingAllocateUnwrapId() view returns (bytes32)',
   'function depositWindowClosesAt() view returns (uint256)',
   'function depositWindowOpensAt() view returns (uint256)',
@@ -67,11 +69,13 @@ const VAULT_ABI = parseAbi([
   'function draw()',
   'function harvestClear() returns (uint256)',
   'function requestTotalPrincipalReveal() returns (bytes32)',
+  'function requestPrizeReserveReveal() returns (bytes32)',
   'function requestAllocate(bytes32 encryptedAmount, bytes inputProof) returns (bytes32)',
   'function finalizeAllocate(uint64 unwrapAmountCleartext, bytes decryptionProof) returns (uint256)',
   'function setPrizePerDraw(bytes32 encryptedAmount, bytes inputProof)',
   'event AllocateRequested(bytes32 indexed unwrapRequestId)',
   'event TotalPrincipalRevealRequested(bytes32 indexed handle)',
+  'event PrizeReserveRevealRequested(bytes32 indexed handle)',
 ]);
 
 const YIELD_ABI = parseAbi([
@@ -136,7 +140,7 @@ async function main() {
       ` · ZamaSDK node() RelayerNode (poll every ${config.pollIntervalMs}ms)`,
   );
   log(
-    'legs each tick: (1) allocate only after deposit window closes  (2) accrue APR drip  (3) harvestClear→encrypt reserve  (4) draw after window+drawInterval',
+    'legs each tick: (1) allocate after deposit window closes  (2) accrue  (3) harvest→encrypt 100% reserve  (4) before draw set prize=prizeShareBps of reserve  (5) draw when due',
   );
 
   if (ONCE) {
@@ -192,7 +196,7 @@ async function tick(
     log('yield: skip (no yieldVault — run deploy:yield:sepolia)');
   }
 
-  await maybeDraw(config, publicClient, walletClient);
+  await maybeDraw(config, publicClient, walletClient, sdk);
 }
 
 /**
@@ -433,19 +437,8 @@ async function maybeHarvestAndEncryptReserve(
   }
   const wrapAmount = reserveConf * WRAP_RATE;
 
-  const prizeShareBps = (await publicClient.readContract({
-    address: config.vaultAddress,
-    abi: VAULT_ABI,
-    functionName: 'prizeShareBps',
-  })) as number;
-
-  // Draw pays only prizeShareBps of this harvest; remainder stays encrypted in reserve.
-  const prizeConf = (reserveConf * BigInt(prizeShareBps)) / 10_000n;
-  if (prizeConf === 0n) {
-    log('yield.harvest: prizeShareBps rounds prize-per-draw to 0 — funding reserve only');
-  }
   log(
-    `yield.harvest: encrypt 100% reserve=${reserveConf} conf units; prizePerDraw=${prizeConf} (${prizeShareBps} bps); padding stays in reserve`,
+    `yield.harvest: encrypt 100% reserve=${reserveConf} conf units (prize-per-draw sized at draw time from full pot)`,
   );
 
   const cToken = (await publicClient.readContract({
@@ -476,7 +469,8 @@ async function maybeHarvestAndEncryptReserve(
   await publicClient.waitForTransactionReceipt({ hash: wrapHash });
   log(`yield.harvest: wrapped ${wrapAmount} → cToken (${wrapHash})`);
 
-  // Encrypt 100% of harvest into the prize reserve.
+  // Encrypt 100% of harvest into the prize reserve. Do NOT overwrite prize-per-draw here —
+  // that is sized from the full reserve immediately before draw().
   const encReserve = await encryptEuint64(sdk, {
     amount: reserveConf,
     contractAddress: cToken,
@@ -497,25 +491,6 @@ async function maybeHarvestAndEncryptReserve(
   });
   await publicClient.waitForTransactionReceipt({ hash: fundHash });
   log(`yield.harvest: encrypted reserve funded 100% of harvest (${fundHash})`);
-
-  if (prizeConf === 0n) return;
-
-  // Prize-per-draw = prizeShareBps only — padding remains in reserve.
-  const encPrize = await encryptEuint64(sdk, {
-    amount: prizeConf,
-    contractAddress: config.vaultAddress,
-    userAddress: owner,
-  });
-  const prizeHash = await walletClient.writeContract({
-    address: config.vaultAddress,
-    abi: VAULT_ABI,
-    functionName: 'setPrizePerDraw',
-    args: [encPrize.handle, encPrize.inputProof],
-    account: walletClient.account!,
-    chain: sepolia,
-  });
-  await publicClient.waitForTransactionReceipt({ hash: prizeHash });
-  log(`yield.harvest: setPrizePerDraw=${prizeConf} conf units (${prizeHash})`);
 }
 
 async function readUnderlying(
@@ -533,23 +508,21 @@ async function maybeDraw(
   config: KeeperConfig,
   publicClient: PublicClient,
   walletClient: Wallet,
+  sdk: ZamaSDK,
 ) {
   const vault = { address: config.vaultAddress, abi: VAULT_ABI } as const;
+  const owner = walletClient.account!.address;
 
-  const [nextDrawAt, prizeConfigured, reserveFunded, depositorCount, drawsCompleted] =
+  const [nextDrawAt, reserveFunded, depositorCount, drawsCompleted, prizeShareBps] =
     await Promise.all([
       publicClient.readContract({ ...vault, functionName: 'nextDrawAt' }),
-      publicClient.readContract({ ...vault, functionName: 'prizePerDrawConfigured' }),
       publicClient.readContract({ ...vault, functionName: 'prizeReserveFunded' }),
       publicClient.readContract({ ...vault, functionName: 'depositorCount' }),
       publicClient.readContract({ ...vault, functionName: 'drawsCompleted' }),
+      publicClient.readContract({ ...vault, functionName: 'prizeShareBps' }),
     ]);
 
   const now = BigInt(Math.floor(Date.now() / 1000));
-  if (!prizeConfigured) {
-    log('draw: skip — prize per draw not configured');
-    return;
-  }
   if (!reserveFunded) {
     log('draw: skip — prize reserve not funded');
     return;
@@ -569,11 +542,85 @@ async function maybeDraw(
     return;
   }
 
-  log(`draw: submitting #${drawsCompleted + 1n}…`);
   try {
+    // Size prize-per-draw as prizeShareBps of the *full* encrypted reserve (not the last drip).
+    const [currentReserveHandle, lastRevealHandle] = (await Promise.all([
+      publicClient.readContract({ ...vault, functionName: 'confidentialPrizeReserve' }),
+      publicClient.readContract({ ...vault, functionName: 'lastPrizeReserveRevealHandle' }),
+    ])) as [Hex, Hex];
+
+    let reserveHandle: Hex = lastRevealHandle;
+    if (
+      !currentReserveHandle ||
+      currentReserveHandle === ZERO ||
+      currentReserveHandle.toLowerCase() !== (lastRevealHandle ?? ZERO).toLowerCase()
+    ) {
+      log('draw: requesting prize-reserve reveal to size prize-per-draw…');
+      try {
+        const revealHash = await walletClient.writeContract({
+          ...vault,
+          functionName: 'requestPrizeReserveReveal',
+          account: walletClient.account!,
+          chain: sepolia,
+        });
+        const revealReceipt = await publicClient.waitForTransactionReceipt({ hash: revealHash });
+        reserveHandle =
+          parsePrizeReserveRevealHandle(revealReceipt) ??
+          ((await publicClient.readContract({
+            ...vault,
+            functionName: 'lastPrizeReserveRevealHandle',
+          })) as Hex);
+        log(`draw: reserve reveal submitted ${revealHash}`);
+      } catch (error) {
+        if (!/RevealAlreadyRequested/i.test(describe(error))) throw error;
+        reserveHandle = (await publicClient.readContract({
+          ...vault,
+          functionName: 'lastPrizeReserveRevealHandle',
+        })) as Hex;
+        log('draw: prize reserve already publicly decryptable');
+      }
+    }
+
+    if (!reserveHandle || reserveHandle === ZERO) {
+      log('draw: skip — no prize-reserve reveal handle');
+      return;
+    }
+
+    log(`draw: publicDecrypt reserve ${reserveHandle}…`);
+    const decrypted = await publicDecryptHandle(sdk, reserveHandle);
+    const reserveConf = decrypted.cleartext;
+    if (reserveConf === 0n) {
+      log('draw: skip — prize reserve is 0');
+      return;
+    }
+
+    const prizeConf = (reserveConf * BigInt(prizeShareBps as number)) / 10_000n;
+    if (prizeConf === 0n) {
+      log(`draw: skip — prizeShareBps rounds prize to 0 (reserve=${reserveConf})`);
+      return;
+    }
+    log(
+      `draw: sizing prize-per-draw=${prizeConf} (${prizeShareBps} bps of reserve ${reserveConf})`,
+    );
+
+    const encPrize = await encryptEuint64(sdk, {
+      amount: prizeConf,
+      contractAddress: config.vaultAddress,
+      userAddress: owner,
+    });
+    const prizeHash = await walletClient.writeContract({
+      ...vault,
+      functionName: 'setPrizePerDraw',
+      args: [encPrize.handle, encPrize.inputProof],
+      account: walletClient.account!,
+      chain: sepolia,
+    });
+    await publicClient.waitForTransactionReceipt({ hash: prizeHash });
+    log(`draw: setPrizePerDraw confirmed (${prizeHash})`);
+
+    log(`draw: submitting #${drawsCompleted + 1n}…`);
     const hash = await walletClient.writeContract({
-      address: config.vaultAddress,
-      abi: VAULT_ABI,
+      ...vault,
       functionName: 'draw',
       account: walletClient.account!,
       chain: sepolia,
@@ -707,6 +754,24 @@ function parsePrincipalRevealHandle(receipt: TransactionReceipt): Hex | null {
         topics: logItem.topics,
       });
       if (decoded.eventName === 'TotalPrincipalRevealRequested' && decoded.args.handle) {
+        return decoded.args.handle as Hex;
+      }
+    } catch {
+      /* next */
+    }
+  }
+  return null;
+}
+
+function parsePrizeReserveRevealHandle(receipt: TransactionReceipt): Hex | null {
+  for (const logItem of receipt.logs) {
+    try {
+      const decoded = decodeEventLog({
+        abi: VAULT_ABI,
+        data: logItem.data,
+        topics: logItem.topics,
+      });
+      if (decoded.eventName === 'PrizeReserveRevealRequested' && decoded.args.handle) {
         return decoded.args.handle as Hex;
       }
     } catch {
