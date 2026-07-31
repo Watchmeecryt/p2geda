@@ -1,0 +1,21 @@
+# ConfiPool frontend (Vite SPA under /app)
+[build]
+  base = "app"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# React Router client routes — avoid Netlify 404 on /app, /app/draws, etc.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Zama RelayerWeb / FHE workers need cross-origin isolation (SharedArrayBuffer).
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"
