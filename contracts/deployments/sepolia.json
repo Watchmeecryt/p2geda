@@ -1,19 +1,19 @@
 {
   "chainId": 11155111,
   "network": "sepolia",
-  "deployer": "0xcC25AcC8120046A3a89431558ab4E6fAE935EcF1",
+  "deployer": "0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9",
   "demoAdmin": "0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9",
-  "vault": "0x3EB0aB292057d697Ab4877325254E92e7066f29c",
-  "yieldVault": "0x61B6686191527834a2b2b0A325d69aaC1B5f2e9B",
+  "vault": "0x5c9983B2517e1Cf3510B2a1912d931C1a427F5Aa",
+  "yieldVault": "0x58A081CEBb06549E8EF4125E033F5bB05eeB3dEb",
   "underlyingToken": "0x9b5Cd13b8eFbB58Dc25A05CF411D8056058aDFfF",
   "confidentialToken": "0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639",
   "drawInterval": 180,
   "yieldAprBps": 8000,
   "prizeShareBps": 8000,
-  "deploymentBlock": 11390249,
-  "deployedAt": "2026-07-31T15:21:36.386Z",
+  "deploymentBlock": 11392011,
+  "deployedAt": "2026-07-31T21:25:48.838Z",
   "depositWindow": 120,
-  "note": "Current vault owner is still `deployer`. Next Sepolia redeploy must use demoAdmin / README demo private key so Railway OWNER_PRIVATE_KEY matches vault.owner().",
-  "previousVault": "0x32A5615195b2a996cF44c14782f87a1aF855EFa0",
-  "previousYieldVault": "0x452cc80931fa35B9efeFA48ba813C78E780460D6"
+  "note": "Owned by demo admin 0xf2fa17…. Deposit window 120s, draw 180s after close. Set app/indexer Railway env to these addresses.",
+  "previousVault": "0x3EB0aB292057d697Ab4877325254E92e7066f29c",
+  "previousYieldVault": "0x61B6686191527834a2b2b0A325d69aaC1B5f2e9B"
 }

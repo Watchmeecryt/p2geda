@@ -12,13 +12,13 @@ function envAddress(raw: string | undefined, fallback: Address): Address {
 
 export const VAULT_ADDRESS = envAddress(
   import.meta.env.VITE_CONFIPOOL_VAULT_ADDRESS,
-  '0x3EB0aB292057d697Ab4877325254E92e7066f29c',
+  '0x5c9983B2517e1Cf3510B2a1912d931C1a427F5Aa',
 );
 
 /** MockYield4626 (Morpho-like). Zero address means the live vault has no yield wired yet. */
 export const YIELD_VAULT_ADDRESS = envAddress(
   import.meta.env.VITE_YIELD_VAULT_ADDRESS,
-  '0x61B6686191527834a2b2b0A325d69aaC1B5f2e9B',
+  '0x58A081CEBb06549E8EF4125E033F5bB05eeB3dEb',
 );
 
 export const YIELD_VAULT_CONFIGURED =

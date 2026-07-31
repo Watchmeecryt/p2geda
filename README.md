@@ -27,14 +27,14 @@ Depositors always deposit **one asset (cUSDC)**. Morpho “exposures” (cbBTC /
 
 | What | Address |
 |------|---------|
-| Prize vault | [`0x32A5615195b2a996cF44c14782f87a1aF855EFa0`](https://sepolia.etherscan.io/address/0x32A5615195b2a996cF44c14782f87a1aF855EFa0) |
-| MockYield4626 | [`0x66E44187855FFaA0baD1092A5B98EdAbCF3aaf5a`](https://sepolia.etherscan.io/address/0x66E44187855FFaA0baD1092A5B98EdAbCF3aaf5a) |
+| Prize vault | [`0x5c9983B2517e1Cf3510B2a1912d931C1a427F5Aa`](https://sepolia.etherscan.io/address/0x5c9983B2517e1Cf3510B2a1912d931C1a427F5Aa) |
+| MockYield4626 | [`0x58A081CEBb06549E8EF4125E033F5bB05eeB3dEb`](https://sepolia.etherscan.io/address/0x58A081CEBb06549E8EF4125E033F5bB05eeB3dEb) |
 | USDC Mock (faucet) | [`0x9b5Cd13b8eFbB58Dc25A05CF411D8056058aDFfF`](https://sepolia.etherscan.io/address/0x9b5Cd13b8eFbB58Dc25A05CF411D8056058aDFfF) |
 | cUSDCMock | [`0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639`](https://sepolia.etherscan.io/address/0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639) |
 | Admin / owner (demo) | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
 
-Deposit window **2 minutes** · draw **3 minutes** after window closes · prize share **80%** of each harvest.  
-Live vault JSON: [`contracts/deployments/sepolia.json`](./contracts/deployments/sepolia.json) (redeploy with the demo admin key below before public review).
+Deposit window **2 minutes** · draw **3 minutes** after window closes · prize share **80%** of each harvest · deploy block **`11392011`**.  
+Full JSON: [`contracts/deployments/sepolia.json`](./contracts/deployments/sepolia.json).
 
 ---
 
@@ -47,7 +47,7 @@ Import this **Sepolia-only** key into MetaMask / Rabby so you unlock Admin contr
 | Address | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
 | Private key | `0x35273d0406fb4ffc60439748ba596225a7b396d03ac5ae2d328b26fd7c944431` |
 
-Fund this wallet with Sepolia ETH for gas, then use it as `PRIVATE_KEY` / `OWNER_PRIVATE_KEY` when redeploying the vault and running the Railway indexer+keeper. The USDC faucet is in the app (Pool → Use faucet).
+This wallet **owns** the live Sepolia vault above. Use the same key as `OWNER_PRIVATE_KEY` for the Railway indexer+keeper. The USDC faucet is in the app (Pool → Use faucet).
 
 ---
 
