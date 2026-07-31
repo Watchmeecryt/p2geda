@@ -1,0 +1,11 @@
+# Railway root directory = indexer.
+# `npm start` runs event indexer + yield/draw keeper in one process tree
+# (see src/start-both.ts) so a single service / shared env covers both.
+[phases.setup]
+nixPkgs = ["nodejs_22"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[start]
+cmd = "npm run start"

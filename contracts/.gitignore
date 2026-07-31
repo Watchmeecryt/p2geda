@@ -1,0 +1,8 @@
+.env
+artifacts/
+cache/
+coverage/
+dist/
+fhevmTemp/
+node_modules/
+types/

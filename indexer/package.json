@@ -1,0 +1,31 @@
+{
+  "name": "confipool-indexer",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Polls ConfiPool vault logs on Sepolia into Supabase so the dApp never scans RPC itself.",
+  "scripts": {
+    "start": "tsx src/start-both.ts",
+    "start:indexer": "tsx src/run.ts",
+    "start:keeper": "tsx src/keeper.ts",
+    "once": "tsx src/run.ts --once",
+    "backfill": "tsx src/run.ts --once --from-deployment",
+    "keeper": "tsx src/keeper.ts",
+    "keeper:once": "tsx src/keeper.ts --once",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.58.0",
+    "@zama-fhe/sdk": "^3.4.0",
+    "dotenv": "^17.2.3",
+    "viem": "^2.47.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.21.0",
+    "typescript": "~5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
