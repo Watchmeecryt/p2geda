@@ -24,8 +24,12 @@ export function WinnerModal({ win, onClose, onClaim, claiming }: Props) {
         open
         onClose={onClose}
         size="sm"
-        title={`You won draw #${win.drawId}`}
-        description="The pool picked your ticket over encrypted balances. Nobody else can see this amount."
+        title={win.drawId !== null ? `You won draw #${win.drawId}` : 'You have unclaimed winnings'}
+        description={
+          win.drawId !== null
+            ? 'The pool picked your ticket over encrypted balances. Nobody else can see this amount.'
+            : 'A prize was added to your encrypted balance. Draw winners are never published — only you can decrypt what you have accrued.'
+        }
       >
         <div className="flex flex-col items-center py-2">
           <div className="relative grid size-24 place-items-center">

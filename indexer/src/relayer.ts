@@ -119,6 +119,53 @@ export async function publicDecryptHandle(
     : new Error(`publicDecrypt failed after ${attempts} attempts`);
 }
 
+/**
+ * Private user-decrypt (EIP-712 permit) for a handle the signer is entitled to.
+ * Same path as the Admin UI — does **not** call `makePubliclyDecryptable`.
+ */
+export async function userDecryptHandle(
+  sdk: ZamaSDK,
+  params: {
+    handle: Hex;
+    contractAddress: `0x${string}`;
+  },
+  opts?: { attempts?: number; delayMs?: number },
+): Promise<bigint> {
+  const contracts = [params.contractAddress];
+  if (!(await sdk.permits.hasPermit(contracts))) {
+    await sdk.permits.grantPermit(contracts);
+  }
+
+  const attempts = opts?.attempts ?? 8;
+  const delayMs = opts?.delayMs ?? 2_000;
+  let lastError: unknown;
+
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const values = await sdk.decryption.decryptValues([
+        {
+          encryptedValue: params.handle,
+          contractAddress: params.contractAddress,
+        },
+      ]);
+      const key = Object.keys(values).find((k) => k.toLowerCase() === params.handle.toLowerCase());
+      if (!key) throw new Error(`decryptValues did not return cleartext for ${params.handle}`);
+      const raw = values[key as keyof typeof values];
+      if (typeof raw === 'bigint') return raw;
+      if (typeof raw === 'number' || typeof raw === 'string') return BigInt(raw);
+      if (typeof raw === 'boolean') return raw ? 1n : 0n;
+      throw new Error(`unexpected clear value type for ${params.handle}`);
+    } catch (error) {
+      lastError = error;
+      if (i < attempts - 1) await sleep(delayMs);
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`userDecrypt failed after ${attempts} attempts`);
+}
+
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }

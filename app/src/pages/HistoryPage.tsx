@@ -18,10 +18,15 @@ import { ConfidentialAmount } from '@/components/ConfidentialAmount';
 import { PrivateViewToggle } from '@/components/PrivateViewToggle';
 import { HistoryAmount } from '@/components/history/HistoryAmount';
 import { useBlockTimestamps } from '@/hooks/useBlockTimestamps';
-import { useMyActivity, useMyPrizeClaims, type ActivityEvent } from '@/hooks/usePoolHistory';
+import {
+  useDrawHistory,
+  useMyActivity,
+  useMyPrizeClaims,
+  type ActivityEvent,
+} from '@/hooks/usePoolHistory';
 import { usePoolStats, useUserPosition } from '@/hooks/usePoolData';
 import { usePrivateView } from '@/hooks/usePrivateView';
-import { useWinJournal } from '@/hooks/useWinJournal';
+import { useWinJournal, type WinEntry } from '@/hooks/useWinJournal';
 import { CUSDC_MOCK_ADDRESS, VAULT_ADDRESS } from '@/lib/contracts';
 import { explorerTxUrl } from '@/lib/chains';
 import { formatConfidential, formatRelativeTime, shortenHash } from '@/lib/format';
@@ -57,8 +62,12 @@ export function HistoryPage() {
 
   const { data: activity, isLoading } = useMyActivity();
   const { data: claims = [] } = useMyPrizeClaims();
+  const { data: draws = [] } = useDrawHistory();
   const rows = activity.filter(isTracked);
-  const timestampOf = useBlockTimestamps(rows);
+  const timestampOf = useBlockTimestamps([...rows, ...draws]);
+
+  const hasUnclaimed =
+    (claimable !== null && claimable > 0n) || journal.wins.some((win) => win.amount !== '0');
 
   if (!isConnected) {
     return (
@@ -89,7 +98,7 @@ export function HistoryPage() {
 
       <div className="mt-8 grid gap-5">
         <Card>
-          <div className="grid gap-6 sm:grid-cols-3">
+          <div className={`grid gap-6 ${claims.length > 0 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
             <Stat
               label="Pool principal"
               value={
@@ -104,32 +113,32 @@ export function HistoryPage() {
             <Stat
               label="Unclaimed prizes"
               value={<ConfidentialAmount value={claimable} decrypting={view.decrypting} symbol={false} />}
-              hint="Claim from the Draws page"
+              hint="Accrues privately when you win — claim from Draws"
             />
-            <Stat
-              label="Draws won"
-              value={claims.length.toString()}
-              hint={
-                claims.length > 0
-                  ? 'From indexed prize claims on this wallet'
-                  : 'Appears here after you claim a prize'
-              }
-            />
+            {claims.length > 0 ? (
+              <Stat
+                label="Prize claims"
+                value={claims.length.toString()}
+                hint="Onchain claims from this wallet"
+              />
+            ) : null}
           </div>
         </Card>
 
         {claims.length > 0 ? (
           <Card flush>
             <CardSection>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="font-bold text-ink">Wins</h3>
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="font-bold text-ink">Claimed prizes</h3>
                   <p className="mt-1 text-[0.84rem] leading-relaxed text-muted">
-                    The chain never records who won a draw. These rows come from your prize claims —
-                    the only durable onchain proof that you received a payout.
+                    Draw winners stay private onchain. A claim is the durable record that you
+                    received a payout — not which draw paid you.
                   </p>
                 </div>
-                <Badge tone="accent">{claims.length}</Badge>
+                <Badge tone="accent" className="shrink-0 whitespace-nowrap">
+                  {claims.length}
+                </Badge>
               </div>
             </CardSection>
 
@@ -139,13 +148,13 @@ export function HistoryPage() {
                   <HugeiconsIcon icon={ChampionIcon} size={17} aria-hidden />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[0.88rem] font-semibold text-ink">
-                    {claim.drawId != null ? `Won draw #${claim.drawId}` : 'Prize claimed'}
-                  </p>
+                  <p className="text-[0.88rem] font-semibold text-ink">Prize claimed</p>
                   <p className="text-[0.76rem] text-hint">
                     {claim.timestamp
                       ? formatRelativeTime(claim.timestamp)
-                      : `block ${claim.blockNumber}`}
+                      : timestampOf(claim.blockNumber)
+                        ? formatRelativeTime(timestampOf(claim.blockNumber)!)
+                        : `block ${claim.blockNumber}`}
                   </p>
                 </div>
                 <HistoryAmount
@@ -157,48 +166,68 @@ export function HistoryPage() {
               </div>
             ))}
           </Card>
-        ) : journal.wins.length > 0 ? (
+        ) : hasUnclaimed ? (
           <Card flush>
             <CardSection>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="font-bold text-ink">Wins</h3>
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="font-bold text-ink">Unclaimed prize</h3>
                   <p className="mt-1 text-[0.84rem] leading-relaxed text-muted">
-                    Unclaimed prizes detected in this browser. Claim them on the Draws page to
-                    persist them in the indexed win history.
+                    For privacy, draws are never linked to a winner address. When you win, the
+                    amount is added to your encrypted balance — only you can decrypt and claim it.
                   </p>
                 </div>
-                <Badge tone="accent">{journal.wins.length}</Badge>
+                <Badge tone="accent" className="shrink-0 whitespace-nowrap">
+                  Private
+                </Badge>
               </div>
             </CardSection>
 
-            {journal.wins.map((win) => (
-              <div key={`${win.drawId}-${win.at}`} className="data-row">
-                <span className="icon-tile icon-tile--accent size-9">
-                  <HugeiconsIcon icon={ChampionIcon} size={17} aria-hidden />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[0.88rem] font-semibold text-ink">Won draw #{win.drawId}</p>
-                  <p className="text-[0.76rem] text-hint">{formatRelativeTime(win.at)}</p>
-                </div>
-                <span className="numeral font-bold text-accent-deep">
-                  +{formatConfidential(BigInt(win.amount))}
-                </span>
-              </div>
-            ))}
+            {journal.wins.length > 0
+              ? journal.wins.map((win) => (
+                  <JournalWinRow
+                    key={`${win.drawId ?? 'agg'}-${win.at}`}
+                    win={win}
+                    draws={draws}
+                    timestampOf={timestampOf}
+                  />
+                ))
+              : claimable !== null && claimable > 0n ? (
+                  <div className="data-row">
+                    <span className="icon-tile icon-tile--accent size-9">
+                      <HugeiconsIcon icon={ChampionIcon} size={17} aria-hidden />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[0.88rem] font-semibold text-ink">Encrypted prize balance</p>
+                      <p className="text-[0.76rem] text-hint">
+                        {(() => {
+                          const latest = draws[0];
+                          if (!latest) return 'Reveal on Draws to claim';
+                          const at = latest.timestamp ?? timestampOf(latest.blockNumber);
+                          return at ? formatRelativeTime(at) : 'From indexed draws';
+                        })()}
+                      </p>
+                    </div>
+                    <span className="numeral font-bold text-accent-deep">
+                      +{formatConfidential(claimable)}
+                    </span>
+                  </div>
+                ) : null}
           </Card>
         ) : null}
 
         <Card flush>
           <CardSection>
-            <div className="flex items-start justify-between gap-3">
-              <div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
                 <h3 className="font-bold text-ink">Onchain activity</h3>
                 <p className="mt-1 text-[0.84rem] text-muted">
                   Public events from your wallet. The amounts stay encrypted until you open them.
                 </p>
               </div>
-              <Badge tone="neutral">{rows.length}</Badge>
+              <Badge tone="neutral" className="shrink-0 whitespace-nowrap">
+                {rows.length}
+              </Badge>
             </div>
           </CardSection>
 
@@ -217,7 +246,7 @@ export function HistoryPage() {
           ) : (
             rows.map((event) => {
               const meta = KIND_META[event.kind];
-              const timestamp = timestampOf(event.blockNumber);
+              const timestamp = event.timestamp ?? timestampOf(event.blockNumber);
               const contract = event.kind === 'deposit' ? VAULT_ADDRESS : CUSDC_MOCK_ADDRESS;
 
               return (
@@ -256,6 +285,42 @@ export function HistoryPage() {
           )}
         </Card>
       </div>
+    </div>
+  );
+}
+
+function JournalWinRow({
+  win,
+  draws,
+  timestampOf,
+}: {
+  win: WinEntry;
+  draws: ActivityEvent[];
+  timestampOf: (blockNumber: bigint) => number | undefined;
+}) {
+  const matched =
+    win.drawId !== null
+      ? draws.find((draw) => Number(draw.drawId ?? 0n) === win.drawId)
+      : draws[0];
+  const timestamp =
+    matched?.timestamp ?? (matched ? timestampOf(matched.blockNumber) : undefined);
+
+  return (
+    <div className="data-row">
+      <span className="icon-tile icon-tile--accent size-9">
+        <HugeiconsIcon icon={ChampionIcon} size={17} aria-hidden />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[0.88rem] font-semibold text-ink">
+          {win.drawId !== null ? `Won draw #${win.drawId}` : 'Encrypted prize balance'}
+        </p>
+        <p className="text-[0.76rem] text-hint">
+          {timestamp ? formatRelativeTime(timestamp) : 'From indexed draws'}
+        </p>
+      </div>
+      <span className="numeral font-bold text-accent-deep">
+        +{formatConfidential(BigInt(win.amount))}
+      </span>
     </div>
   );
 }

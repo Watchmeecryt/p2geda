@@ -19,6 +19,7 @@ import {
   encryptEuint64,
   getSdk,
   publicDecryptHandle,
+  userDecryptHandle,
 } from './relayer.js';
 
 /**
@@ -29,13 +30,13 @@ import {
  *   2. If nothing allocated yet: public-decrypt aggregate principal → encrypt unwrap
  *      amount → requestAllocate → publicDecrypt burnt handle → finalizeAllocate.
  *   3. harvestClear() → clear surplus to owner (leaked on purpose).
- *   4. Encrypt **100%** of harvested yield into `_prizeReserve`, then setPrizePerDraw to
- *      only `prizeShareBps` (default 80%). The leftover ~20% stays encrypted in the reserve
- *      as padding so clear harvest size ≠ prize-per-draw ≠ winner claim.
+ *   4. Encrypt **100%** of harvested yield into `_prizeReserve`.
  *
  * DRAW LEG
- *   draw() only after a deposit bus closes (`depositWindowClosesAt != 0` and due).
- *   Idle redraws (no new deposits) are admin-only — the keeper does not auto-draw then.
+ *   Before draw: EIP-712 **userDecrypt** of `_prizeReserve` (same path as Admin UI —
+ *   never `makePubliclyDecryptable`), size prize-per-draw to `prizeShareBps`, then `draw()`.
+ *   Only after a deposit bus closes (`depositWindowClosesAt != 0` and due).
+ *   Idle redraws (no new deposits) are admin-only.
  *
  * Same OWNER_PRIVATE_KEY as vault.owner(). Mainnet: swap sepolia → mainnet + API key
  * in relayer.ts; point VAULT_ADDRESS / yield at Morpho.
@@ -61,7 +62,6 @@ const VAULT_ABI = parseAbi([
   'function confidentialTotalPrincipal() view returns (bytes32)',
   'function confidentialPrizeReserve() view returns (bytes32)',
   'function lastTotalPrincipalRevealHandle() view returns (bytes32)',
-  'function lastPrizeReserveRevealHandle() view returns (bytes32)',
   'function pendingAllocateUnwrapId() view returns (bytes32)',
   'function depositWindowClosesAt() view returns (uint256)',
   'function depositWindowOpensAt() view returns (uint256)',
@@ -70,13 +70,11 @@ const VAULT_ABI = parseAbi([
   'function draw()',
   'function harvestClear() returns (uint256)',
   'function requestTotalPrincipalReveal() returns (bytes32)',
-  'function requestPrizeReserveReveal() returns (bytes32)',
   'function requestAllocate(bytes32 encryptedAmount, bytes inputProof) returns (bytes32)',
   'function finalizeAllocate(uint64 unwrapAmountCleartext, bytes decryptionProof) returns (uint256)',
   'function setPrizePerDraw(bytes32 encryptedAmount, bytes inputProof)',
   'event AllocateRequested(bytes32 indexed unwrapRequestId)',
   'event TotalPrincipalRevealRequested(bytes32 indexed handle)',
-  'event PrizeReserveRevealRequested(bytes32 indexed handle)',
 ]);
 
 const YIELD_ABI = parseAbi([
@@ -141,7 +139,7 @@ async function main() {
       ` · ZamaSDK node() RelayerNode (poll every ${config.pollIntervalMs}ms)`,
   );
   log(
-    'legs each tick: (1) allocate after deposit window closes  (2) accrue  (3) harvest→encrypt 100% reserve  (4) before draw set prize=prizeShareBps of reserve  (5) draw only when a closed deposit bus is due (idle redraw = admin)',
+    'legs each tick: (1) allocate after deposit window closes  (2) accrue  (3) harvest→encrypt 100% reserve  (4) EIP-712 userDecrypt reserve → prizeShareBps → draw only when a closed deposit bus is due (idle redraw = admin)',
   );
 
   if (ONCE) {
@@ -549,52 +547,24 @@ async function maybeDraw(
   }
 
   try {
-    // Size prize-per-draw as prizeShareBps of the *full* encrypted reserve (not the last drip).
-    const [currentReserveHandle, lastRevealHandle] = (await Promise.all([
-      publicClient.readContract({ ...vault, functionName: 'confidentialPrizeReserve' }),
-      publicClient.readContract({ ...vault, functionName: 'lastPrizeReserveRevealHandle' }),
-    ])) as [Hex, Hex];
-
-    let reserveHandle: Hex = lastRevealHandle;
-    if (
-      !currentReserveHandle ||
-      currentReserveHandle === ZERO ||
-      currentReserveHandle.toLowerCase() !== (lastRevealHandle ?? ZERO).toLowerCase()
-    ) {
-      log('draw: requesting prize-reserve reveal to size prize-per-draw…');
-      try {
-        const revealHash = await walletClient.writeContract({
-          ...vault,
-          functionName: 'requestPrizeReserveReveal',
-          account: walletClient.account!,
-          chain: sepolia,
-        });
-        const revealReceipt = await publicClient.waitForTransactionReceipt({ hash: revealHash });
-        reserveHandle =
-          parsePrizeReserveRevealHandle(revealReceipt) ??
-          ((await publicClient.readContract({
-            ...vault,
-            functionName: 'lastPrizeReserveRevealHandle',
-          })) as Hex);
-        log(`draw: reserve reveal submitted ${revealHash}`);
-      } catch (error) {
-        if (!/RevealAlreadyRequested/i.test(describe(error))) throw error;
-        reserveHandle = (await publicClient.readContract({
-          ...vault,
-          functionName: 'lastPrizeReserveRevealHandle',
-        })) as Hex;
-        log('draw: prize reserve already publicly decryptable');
-      }
-    }
+    // Size prize-per-draw via private EIP-712 userDecrypt of the full reserve
+    // (same path as Admin UI). Do NOT call requestPrizeReserveReveal — that would
+    // make the pot publicly decryptable.
+    const reserveHandle = (await publicClient.readContract({
+      ...vault,
+      functionName: 'confidentialPrizeReserve',
+    })) as Hex;
 
     if (!reserveHandle || reserveHandle === ZERO) {
-      log('draw: skip — no prize-reserve reveal handle');
+      log('draw: skip — prize reserve handle missing');
       return;
     }
 
-    log(`draw: publicDecrypt reserve ${reserveHandle}…`);
-    const decrypted = await publicDecryptHandle(sdk, reserveHandle);
-    const reserveConf = decrypted.cleartext;
+    log(`draw: userDecrypt (EIP-712) reserve ${reserveHandle}…`);
+    const reserveConf = await userDecryptHandle(sdk, {
+      handle: reserveHandle,
+      contractAddress: config.vaultAddress,
+    });
     if (reserveConf === 0n) {
       log('draw: skip — prize reserve is 0');
       return;
@@ -760,24 +730,6 @@ function parsePrincipalRevealHandle(receipt: TransactionReceipt): Hex | null {
         topics: logItem.topics,
       });
       if (decoded.eventName === 'TotalPrincipalRevealRequested' && decoded.args.handle) {
-        return decoded.args.handle as Hex;
-      }
-    } catch {
-      /* next */
-    }
-  }
-  return null;
-}
-
-function parsePrizeReserveRevealHandle(receipt: TransactionReceipt): Hex | null {
-  for (const logItem of receipt.logs) {
-    try {
-      const decoded = decodeEventLog({
-        abi: VAULT_ABI,
-        data: logItem.data,
-        topics: logItem.topics,
-      });
-      if (decoded.eventName === 'PrizeReserveRevealRequested' && decoded.args.handle) {
         return decoded.args.handle as Hex;
       }
     } catch {

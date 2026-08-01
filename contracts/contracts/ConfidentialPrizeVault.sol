@@ -74,7 +74,7 @@ contract ConfidentialPrizeVault is
     bytes32 public lastTotalPrincipalRevealHandle;
     /// @notice Last principal handle published for public metrics (gated by deposit threshold).
     bytes32 public lastPublicTvlRevealHandle;
-    /// @notice Last handle made publicly decryptable for `_prizeReserve` (keeper sizes draw prize).
+    /// @notice Last handle made publicly decryptable for `_prizeReserve` (optional admin reveal).
     bytes32 public lastPrizeReserveRevealHandle;
     /// @notice Share of each harvested yield that becomes prize-per-draw (rest stays encrypted
     ///         in `_prizeReserve` as padding so clear harvest ≠ draw prize ≠ winner claim).
@@ -425,8 +425,9 @@ contract ConfidentialPrizeVault is
         emit PublicTvlRevealRequested(count, handle);
     }
 
-    /// @notice Make `_prizeReserve` publicly decryptable so the keeper can size prize-per-draw.
-    /// @dev Leaks aggregate reserve only — not the winner or per-user amounts.
+    /// @notice Make `_prizeReserve` publicly decryptable (optional admin tool).
+    /// @dev The keeper sizes prize-per-draw via private EIP-712 userDecrypt instead —
+    ///      it does not call this, so the draw path does not publish the pot size.
     function requestPrizeReserveReveal() external onlyOwner returns (bytes32 handle) {
         handle = euint64.unwrap(_prizeReserve);
         if (handle == lastPrizeReserveRevealHandle) revert RevealAlreadyRequested(handle);

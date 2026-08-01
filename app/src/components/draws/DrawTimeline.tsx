@@ -14,20 +14,26 @@ export function DrawTimeline({ wins }: { wins: WinEntry[] }) {
   const { data: draws, isLoading } = useDrawHistory();
   const timestampOf = useBlockTimestamps(draws);
 
-  const winByDraw = new Map(wins.map((win) => [win.drawId, win]));
+  const winByDraw = new Map(
+    wins
+      .filter((win) => win.drawId !== null && win.amount !== '0')
+      .map((win) => [win.drawId as number, win]),
+  );
 
   return (
     <Card flush>
       <CardSection>
-        <div className="flex items-start justify-between gap-3">
-          <div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
             <h3 className="font-bold text-ink">Draw history</h3>
             <p className="mt-1 text-[0.84rem] text-muted">
-              Draws come from the indexer. Who won stays encrypted — only your decrypted claimable
-              can mark a row as yours.
+              Draw IDs are public. Winners are not — for privacy, no draw is linked to an address.
+              If you win, the prize is added to your encrypted balance and only you can decrypt it.
             </p>
           </div>
-          <Badge tone="neutral">{draws.length} total</Badge>
+          <Badge tone="neutral" className="shrink-0 whitespace-nowrap">
+            {draws.length} draws
+          </Badge>
         </div>
       </CardSection>
 
@@ -48,7 +54,7 @@ export function DrawTimeline({ wins }: { wins: WinEntry[] }) {
           {draws.map((draw) => {
             const drawId = Number(draw.drawId ?? 0n);
             const win = winByDraw.get(drawId);
-            const timestamp = timestampOf(draw.blockNumber);
+            const timestamp = draw.timestamp ?? timestampOf(draw.blockNumber);
 
             return (
               <li key={draw.id} className="data-row flex-wrap">
@@ -63,13 +69,15 @@ export function DrawTimeline({ wins }: { wins: WinEntry[] }) {
                   </p>
                 </div>
 
-                {win && win.amount !== '0' ? (
-                  <Badge tone="accent">
+                {win ? (
+                  <Badge tone="accent" className="shrink-0 whitespace-nowrap">
                     <HugeiconsIcon icon={ChampionIcon} size={13} aria-hidden />
                     You won {formatConfidential(BigInt(win.amount))}
                   </Badge>
                 ) : (
-                  <Badge tone="neutral">Winner encrypted</Badge>
+                  <Badge tone="neutral" className="shrink-0 whitespace-nowrap">
+                    Winner encrypted
+                  </Badge>
                 )}
 
                 <a

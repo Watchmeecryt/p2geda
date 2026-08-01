@@ -54,7 +54,7 @@ Import this **Sepolia-only** key into MetaMask / Rabby so you unlock Admin contr
 | Address | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
 | Private key | `0x35273d0406fb4ffc60439748ba596225a7b396d03ac5ae2d328b26fd7c944431` |
 
-This wallet **owns** the live Sepolia vault above. Use the same key as `OWNER_PRIVATE_KEY` for the Railway indexer+keeper. The USDC faucet is in the app (Pool → Use faucet).
+This wallet **owns** the live Sepolia vault above. The USDC faucet is in the app (Pool → Use faucet).
 
 ---
 
@@ -80,11 +80,11 @@ Best when you want the full allocate → accrue → harvest → encrypt → draw
    - public-decrypts aggregate TVL → allocates into MockYield4626
    - drips demo APR
    - `harvestClear` → encrypts **100%** into the prize reserve (does **not** overwrite prize-per-draw)
-   - when the draw is due: reveals the reserve → sets prize-per-draw to **80% of the full pot** → `draw()`
+   - when the draw is due: **EIP-712 userDecrypt** of the reserve (same private path as Admin UI — not public reveal) → sets prize-per-draw to **80% of the full pot** → `draw()`
 3. Winner claims on the Draws page.
 4. After enough draws / depositors, Admin publishes **prizes paid** / **TVL** → Metrics page publicDecrypt.
 
-Keeper sizing of prize-per-draw uses the encrypted reserve each cycle, so the clear prize amount moves as the pot grows (default **80%** of reserve via `prizeShareBps`).
+Keeper sizing of prize-per-draw uses a private owner **userDecrypt** of the encrypted reserve each cycle (not `makePubliclyDecryptable`), so the clear prize amount moves as the pot grows (default **80%** of reserve via `prizeShareBps`) without publishing the pot size.
 
 ```bash
 cd indexer
