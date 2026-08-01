@@ -26,6 +26,12 @@ export function PoolPage() {
     stats.refetch();
   }, [position, stats]);
 
+  const runDraw = useCallback(async () => {
+    if (await actions.triggerDraw()) {
+      refresh();
+    }
+  }, [actions, refresh]);
+
   return (
     <div>
       <PageHeader
@@ -76,7 +82,12 @@ export function PoolPage() {
               walletBalance={view.tokenValue(position.walletHandle)}
               isDepositor={position.isDepositor}
             />
-            <PoolStatsCard stats={stats} />
+            <PoolStatsCard
+              stats={stats}
+              canDraw
+              drawing={actions.activeAction === 'draw'}
+              onDraw={runDraw}
+            />
           </div>
         </div>
       )}

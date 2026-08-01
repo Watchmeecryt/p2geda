@@ -2,12 +2,24 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { Clock01Icon, DiceIcon, UserGroupIcon } from '@hugeicons/core-free-icons';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useCountdown } from '@/hooks/useCountdown';
 import { formatCountdown } from '@/lib/format';
 import type { PoolStats } from '@/hooks/usePoolData';
 
-export function PoolStatsCard({ stats }: { stats: PoolStats }) {
+export function PoolStatsCard({
+  stats,
+  canDraw = false,
+  drawing = false,
+  onDraw,
+}: {
+  stats: PoolStats;
+  /** Connected wallet may call permissionless bus `draw()` when due. */
+  canDraw?: boolean;
+  drawing?: boolean;
+  onDraw?: () => void;
+}) {
   const drawRemaining = useCountdown(stats.nextDrawAt);
   const windowRemaining = useCountdown(stats.depositWindowClosesAt);
   const live = stats.prizeConfigured && stats.reserveFunded;
@@ -15,6 +27,10 @@ export function PoolStatsCard({ stats }: { stats: PoolStats }) {
   const windowOpen = stats.depositsOpen && !windowIdle;
   /** Idle after a draw: contract still exposes nextDrawAt for admin, but the keeper will not run it. */
   const idleNoBus = windowIdle && stats.lastDrawAt > 0n;
+  const busDrawPending = !idleNoBus && stats.nextDrawAt > 0n;
+  const ready = busDrawPending && drawRemaining === 0 && live;
+  const stalled = busDrawPending && drawRemaining === 0 && !live;
+  const showPublicDraw = Boolean(onDraw) && busDrawPending && (live || stalled);
 
   return (
     <Card>
@@ -56,6 +72,8 @@ export function PoolStatsCard({ stats }: { stats: PoolStats }) {
               'After next deposit'
             ) : stats.nextDrawAt === 0n ? (
               'After next deposit bus'
+            ) : ready ? (
+              'Ready now'
             ) : (
               formatCountdown(drawRemaining)
             )
@@ -79,12 +97,36 @@ export function PoolStatsCard({ stats }: { stats: PoolStats }) {
         />
       </dl>
 
-      <p className="mt-5 border-t border-hairline pt-4 text-[0.76rem] leading-relaxed text-hint">
-        Each batch: {Number(stats.depositWindowDuration)}s deposit window, then capital parks in
-        MockYield and the draw is due {Number(stats.drawInterval)}s after close. When ready,{' '}
-        <span className="font-semibold text-ink">anyone</span> can run the draw (or the keeper
-        does). Idle redraws without a new bus stay admin-only.
-      </p>
+      {showPublicDraw ? (
+        <div className="mt-5 border-t border-hairline pt-4">
+          <Button
+            variant="accent"
+            fullWidth
+            size="lg"
+            className="h-[3.75rem] text-[1.05rem] font-bold shadow-cta-soft sm:h-16 sm:text-[1.15rem]"
+            disabled={!canDraw || !ready}
+            loading={drawing}
+            onClick={onDraw}
+          >
+            <HugeiconsIcon icon={DiceIcon} size={22} aria-hidden />
+            {ready ? 'Draw winner' : stalled ? 'Prize not funded' : `Draw in ${formatCountdown(drawRemaining)}`}
+          </Button>
+          <p className="mt-3 text-center text-[0.76rem] leading-relaxed text-hint">
+            {stalled
+              ? 'The timer has elapsed, but the prize reserve still needs funding before a draw can run.'
+              : ready
+                ? 'Anyone can run this — it picks a winner onchain over encrypted balances. On mainnet a keeper usually handles it.'
+                : 'Button unlocks when the countdown hits zero. Bus draws are permissionless on testnet.'}
+          </p>
+        </div>
+      ) : (
+        <p className="mt-5 border-t border-hairline pt-4 text-[0.76rem] leading-relaxed text-hint">
+          Each batch: {Number(stats.depositWindowDuration)}s deposit window, then capital parks in
+          MockYield and the draw is due {Number(stats.drawInterval)}s after close. When ready,{' '}
+          <span className="font-semibold text-ink">anyone</span> can run the draw here (or the
+          keeper does). Idle redraws without a new bus stay admin-only.
+        </p>
+      )}
     </Card>
   );
 }
