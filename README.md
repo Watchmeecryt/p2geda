@@ -63,16 +63,23 @@ depositors ──cUSDC──► prize vault (encrypted balances)
 
 ### What can leak (documented)
 
-| Surface | Leak | Why |
-|---------|------|-----|
-| That a draw / deposit / withdraw / claim tx happened | Public logs + tx pattern | Needed for indexing & UX |
+| Surface | Leak | Why / mitigation |
+|---------|------|------------------|
+| That a draw / deposit / withdraw / claim tx happened | Public logs + tx pattern | Indexing & UX; amounts stay handles |
+| Who is in the pool | Enumerable depositor list (cap 32) | Gas-bounded FHE loop needs an address set; sizes stay encrypted |
 | Aggregate TVL (Metrics) | After admin `requestPublicTvlReveal` (≥ **3** depositors by default) | Optional public stats |
 | Aggregate prizes paid (Metrics) | After admin `requestTotalPrizesPaidReveal` (≥ **5** draws by default) | Optional public stats |
-| Aggregate TVL for **allocate** | Keeper `requestTotalPrincipalReveal` + `publicDecrypt` | Must know a **clear** amount to deposit into ERC-4626 |
-| `harvestClear` surplus size | Clear ERC-20 transfer to owner | Demo harvest path; then re-encrypted into reserve |
+| Aggregate TVL for **allocate** | Keeper `requestTotalPrincipalReveal` + `publicDecrypt` | Clear size required to deposit into ERC-4626 |
+| Clear `allocatedUnderlying` | Public uint after allocate | Accounting for how much is parked in MockYield |
+| `harvestClear` surplus size | Clear ERC-20 + event | Demo harvest; then re-encrypted 100% into reserve |
+| Prize size inference | Public `prizeShareBps` (default 80%) × last clear harvest | Observer can estimate ≈ prize; residual ~20% stays in encrypted reserve as padding |
+| Withdraw liquidity | Redeem may pull **all** allocated yield back to pay one exit | Demo custody; see [`06-FUTURE-ENCRYPTED-SHARE-WITHDRAW.md`](./06-FUTURE-ENCRYPTED-SHARE-WITHDRAW.md) |
+| Optional pot reveal | Owner may call `requestPrizeReserveReveal` | **Not** used by the keeper; draw sizing uses EIP-712 userDecrypt instead |
 | Draw history “addresses” | Tx hashes, not winners | Indexer shows draw txs |
 
 Thresholds for Metrics publishes are admin-updatable (`setMinDepositsBeforePublicTvlReveal` / `setMinDrawsBeforePublicReveal`).
+
+**Winner selection (fairness):** onchain `FHE.randEuint64` → ticket scaled by encrypted `_totalPrincipal` → cumulative walk over encrypted `_balances` → `FHE.select` credits exactly one depositor’s claimable. No offchain RNG; no plaintext balances in the pick.
 
 ---
 
