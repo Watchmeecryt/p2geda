@@ -56,7 +56,7 @@ export function NextDrawCard({ stats }: { stats: PoolStats }) {
               : windowOpen
                 ? `Deposit bus still open (${formatCountdown(windowRemaining)} left). Draw follows ${formatCountdown(interval)} after close.`
                 : idleRedraw
-                  ? `No new bus — yield can keep funding the reserve. Next draw due in ${formatCountdown(remaining)}.`
+                  ? `No new bus — yield can keep funding the reserve. Admin can redraw after ${formatCountdown(remaining)}; the keeper waits for the next deposit bus.`
                   : `Deposit bus closed. Draw due in ${formatCountdown(remaining)}.`}
           </p>
         </div>
@@ -96,12 +96,12 @@ export function NextDrawCard({ stats }: { stats: PoolStats }) {
             ? 'No batch is open yet. Deposit to start the next bus.'
             : ready
               ? idleRedraw
-                ? 'Interval elapsed — admin or keeper can run another draw without a new deposit.'
+                ? 'Interval elapsed — only Admin can run another draw without a new deposit. The keeper stays idle until the next bus.'
                 : 'The batch timer has elapsed — the keeper can run the draw now.'
               : stalled
                 ? 'The timer has elapsed, but the prize reserve still needs funding before a draw can run.'
                 : idleRedraw
-                  ? 'Depositors stay entered. Accrued yield can fund the next prize without a fresh deposit bus.'
+                  ? 'Depositors stay entered. Accrued yield can fund an admin redraw without a fresh deposit bus.'
                   : 'Every depositor in this batch is entered automatically. There is nothing to opt into.'}
         </p>
       </div>

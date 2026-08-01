@@ -34,7 +34,8 @@ import {
  *      as padding so clear harvest size ≠ prize-per-draw ≠ winner claim.
  *
  * DRAW LEG
- *   draw() when interval due — no FHE inputs.
+ *   draw() only after a deposit bus closes (`depositWindowClosesAt != 0` and due).
+ *   Idle redraws (no new deposits) are admin-only — the keeper does not auto-draw then.
  *
  * Same OWNER_PRIVATE_KEY as vault.owner(). Mainnet: swap sepolia → mainnet + API key
  * in relayer.ts; point VAULT_ADDRESS / yield at Morpho.
@@ -140,7 +141,7 @@ async function main() {
       ` · ZamaSDK node() RelayerNode (poll every ${config.pollIntervalMs}ms)`,
   );
   log(
-    'legs each tick: (1) allocate after deposit window closes  (2) accrue  (3) harvest→encrypt 100% reserve  (4) before draw set prize=prizeShareBps of reserve  (5) draw when due',
+    'legs each tick: (1) allocate after deposit window closes  (2) accrue  (3) harvest→encrypt 100% reserve  (4) before draw set prize=prizeShareBps of reserve  (5) draw only when a closed deposit bus is due (idle redraw = admin)',
   );
 
   if (ONCE) {
@@ -513,13 +514,14 @@ async function maybeDraw(
   const vault = { address: config.vaultAddress, abi: VAULT_ABI } as const;
   const owner = walletClient.account!.address;
 
-  const [nextDrawAt, reserveFunded, depositorCount, drawsCompleted, prizeShareBps] =
+  const [nextDrawAt, reserveFunded, depositorCount, drawsCompleted, prizeShareBps, depositWindowClosesAt] =
     await Promise.all([
       publicClient.readContract({ ...vault, functionName: 'nextDrawAt' }),
       publicClient.readContract({ ...vault, functionName: 'prizeReserveFunded' }),
       publicClient.readContract({ ...vault, functionName: 'depositorCount' }),
       publicClient.readContract({ ...vault, functionName: 'drawsCompleted' }),
       publicClient.readContract({ ...vault, functionName: 'prizeShareBps' }),
+      publicClient.readContract({ ...vault, functionName: 'depositWindowClosesAt' }),
     ]);
 
   const now = BigInt(Math.floor(Date.now() / 1000));
@@ -531,10 +533,14 @@ async function maybeDraw(
     log('draw: skip — no depositors');
     return;
   }
-  // Idle after a draw: `nextDrawAt` is lastDrawAt + interval (repeat draws without a
-  // new deposit bus). `0` means nothing is scheduled (no depositors / never drawn).
+  // Keeper only draws for a closed deposit bus. Idle schedules (`lastDrawAt + interval`
+  // with window cleared) are for Admin → Draw, not automatic keeper ticks.
+  if (depositWindowClosesAt === 0n) {
+    log('draw: skip — no closed deposit bus (idle redraw is admin-only)');
+    return;
+  }
   if (nextDrawAt === 0n) {
-    log('draw: skip — no deposit batch open (waiting for next first deposit)');
+    log('draw: skip — no draw scheduled');
     return;
   }
   if (now < nextDrawAt) {

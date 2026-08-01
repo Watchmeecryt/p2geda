@@ -1,12 +1,14 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   Analytics01Icon,
+  Cancel01Icon,
   ChartIncreaseIcon,
   DiceIcon,
   GiftIcon,
+  Menu01Icon,
   SafeIcon,
   Settings02Icon,
 } from '@hugeicons/core-free-icons';
@@ -44,83 +46,192 @@ const ADMIN_ITEM: NavItem = {
 export function AppShell({ children }: { children: ReactNode }) {
   const isAdmin = useIsAdmin();
   const { pathname } = useLocation();
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const items = [...NAV, YIELD_ITEM, ...(isAdmin ? [ADMIN_ITEM] : [])];
 
-  return (
-    <div className="app-scope min-h-dvh bg-[var(--background)]">
-      <header className="glass-strong sticky top-0 z-40 border-b border-[var(--color-border-light)]">
-        <div className="flex h-14 items-center gap-3 px-3 sm:h-16 sm:px-5">
-          <Link to="/" aria-label="ConfiPool home" className="flex items-center gap-2.5">
-            <BrandMark size={30} />
-            <span className="text-[17px] font-bold tracking-[-0.02em] text-ink max-sm:hidden">
-              ConfiPool
-            </span>
-          </Link>
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [pathname]);
 
-          <div className="ml-auto flex items-center gap-2.5">
-            <DrawPill />
-            <ConnectButton
-              accountStatus={{ smallScreen: 'avatar', largeScreen: 'address' }}
-              chainStatus="icon"
-              showBalance={false}
-            />
-          </div>
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [drawerOpen]);
+
+  return (
+    <div className="app-shell app-scope flex min-h-[100dvh] flex-col lg:h-[100dvh] lg:overflow-hidden">
+      <header className="app-shell-chrome glass-stroke hidden shrink-0 lg:flex">
+        <BrandLink />
+        <div className="app-shell-chrome-actions relative z-[1] flex items-center gap-3">
+          <DrawPill />
+          <ConnectButton
+            accountStatus={{ smallScreen: 'avatar', largeScreen: 'address' }}
+            chainStatus="icon"
+            showBalance={false}
+          />
         </div>
       </header>
 
-      <aside className="fixed top-16 bottom-0 left-0 z-30 hidden w-60 flex-col border-r border-[var(--color-border-light)] bg-[color-mix(in_srgb,var(--card-solid)_70%,transparent)] px-3 py-5 backdrop-blur-[16px] lg:flex">
-        <nav aria-label="Main" className="flex flex-col gap-1">
-          {items.map((item) => (
-            <RailLink key={item.to} item={item} />
-          ))}
-        </nav>
-        <NoLossNote />
-      </aside>
+      {drawerOpen ? (
+        <>
+          <button
+            type="button"
+            className="app-shell-drawer-backdrop fixed inset-0 z-40 bg-black/40 backdrop-blur-sm lg:hidden"
+            aria-label="Close menu"
+            onClick={() => setDrawerOpen(false)}
+          />
+          <aside className="app-shell-drawer glass-stroke lg:hidden" aria-modal="true" role="dialog">
+            <SidebarNav
+              items={items}
+              showBrand
+              showClose
+              onClose={() => setDrawerOpen(false)}
+              onNavigate={() => setDrawerOpen(false)}
+            />
+          </aside>
+        </>
+      ) : null}
 
-      <main className="relative px-4 pt-6 pb-28 sm:px-6 lg:pb-12 lg:pl-64">
-        <div className="mx-auto w-full max-w-6xl">
-          <NetworkBanner />
-          <div key={pathname} className="section-reveal">
-            {children}
-          </div>
+      <div className="app-shell-body flex min-h-0 min-w-0 flex-1 flex-col lg:flex-row lg:gap-3">
+        <aside className="app-shell-sidebar glass-stroke hidden lg:flex">
+          <SidebarNav items={items} showBrand={false} />
+        </aside>
+
+        <div className="app-shell-main flex min-w-0 flex-1 flex-col lg:min-h-0 lg:overflow-hidden">
+          <header className="app-shell-header sticky top-0 z-[100] flex shrink-0 items-center gap-2 border-b border-[var(--color-border-light)] bg-[var(--glass-strong)]/90 px-3 py-3 shadow-separator-inset backdrop-blur-md sm:px-4 lg:hidden">
+            <button
+              type="button"
+              className="btn-secondary shrink-0 rounded-full p-2"
+              onClick={() => setDrawerOpen((open) => !open)}
+              aria-label={drawerOpen ? 'Close menu' : 'Open menu'}
+              aria-expanded={drawerOpen}
+            >
+              <HugeiconsIcon icon={drawerOpen ? Cancel01Icon : Menu01Icon} size={22} />
+            </button>
+            <BrandLink compact className="min-w-0" />
+            <div className="ml-auto flex min-w-0 items-center gap-2">
+              <DrawPill compact />
+              <ConnectButton
+                accountStatus="avatar"
+                chainStatus="icon"
+                showBalance={false}
+              />
+            </div>
+          </header>
+
+          <main className="flex-1 overflow-x-clip lg:overflow-y-auto">
+            <div className="app-shell-content">
+              <NetworkBanner />
+              <div key={pathname} className="section-reveal">
+                {children}
+              </div>
+            </div>
+          </main>
         </div>
-      </main>
-
-      <nav
-        aria-label="Main"
-        className="glass-strong fixed inset-x-0 bottom-0 z-40 flex items-stretch justify-around border-t border-[var(--color-border-light)] px-2 pb-[env(safe-area-inset-bottom)] lg:hidden"
-      >
-        {items.map((item) => (
-          <BottomLink key={item.to} item={item} />
-        ))}
-      </nav>
+      </div>
     </div>
   );
 }
 
-function RailLink({ item }: { item: NavItem }) {
+function BrandLink({
+  onClick,
+  className,
+  compact = false,
+}: {
+  onClick?: () => void;
+  className?: string;
+  compact?: boolean;
+}) {
+  return (
+    <Link
+      to="/"
+      onClick={onClick}
+      aria-label="ConfiPool home"
+      className={cn('app-shell-brand-link', className)}
+    >
+      <BrandMark size={compact ? 28 : 30} />
+      <span className={cn('min-w-0', compact && 'max-[380px]:hidden')}>
+        <span className="block text-[17px] leading-tight font-bold tracking-[-0.02em] text-ink">
+          ConfiPool
+        </span>
+        {!compact ? (
+          <span className="block text-[11px] leading-tight text-hint">Confidential prize vault</span>
+        ) : null}
+      </span>
+    </Link>
+  );
+}
+
+function SidebarNav({
+  items,
+  onNavigate,
+  showClose,
+  onClose,
+  showBrand = true,
+}: {
+  items: NavItem[];
+  onNavigate?: () => void;
+  showClose?: boolean;
+  onClose?: () => void;
+  showBrand?: boolean;
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {showBrand ? (
+        <div className="app-shell-sidebar-brand flex shrink-0 items-center justify-between gap-2 border-b border-[var(--color-border-light)] px-4 py-4 shadow-separator-inset">
+          <BrandLink onClick={onNavigate} />
+          {showClose ? (
+            <button
+              type="button"
+              className="btn-secondary shrink-0 rounded-full p-2"
+              onClick={onClose}
+              aria-label="Close menu"
+            >
+              <HugeiconsIcon icon={Cancel01Icon} size={20} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      <nav
+        aria-label="Main"
+        className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-3"
+      >
+        {items.map((item) => (
+          <RailLink key={item.to} item={item} onNavigate={onNavigate} />
+        ))}
+      </nav>
+
+      <div className="shrink-0 p-3 pt-0">
+        <NoLossNote />
+      </div>
+    </div>
+  );
+}
+
+function RailLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
   return (
     <NavLink
       to={item.to}
       end={item.end}
+      onClick={onNavigate}
       className={({ isActive }) =>
-        cn(
-          'relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 transition-all',
-          isActive
-            ? 'btn-ink border border-transparent'
-            : 'border border-transparent text-body hover:bg-[color-mix(in_srgb,var(--card-solid)_88%,var(--background))] hover:text-ink hover:shadow-separator-inset',
-        )
+        cn('app-shell-nav-link', isActive && 'app-shell-nav-link--active')
       }
     >
       {({ isActive }) => (
         <>
-          <HugeiconsIcon icon={item.icon} size={18} aria-hidden className="shrink-0" />
+          <HugeiconsIcon icon={item.icon} size={20} aria-hidden className="shrink-0 opacity-90" />
           <span className="min-w-0">
             <span className="block text-[14px] leading-tight font-bold">{item.label}</span>
             <span
               className={cn(
                 'block truncate text-[11.5px] leading-tight',
-                isActive ? 'text-white/55' : 'text-hint',
+                isActive ? 'text-[var(--color-text-tertiary)]' : 'text-hint',
               )}
             >
               {item.hint}
@@ -132,26 +243,8 @@ function RailLink({ item }: { item: NavItem }) {
   );
 }
 
-function BottomLink({ item }: { item: NavItem }) {
-  return (
-    <NavLink
-      to={item.to}
-      end={item.end}
-      className={({ isActive }) =>
-        cn(
-          'flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] font-bold transition-colors',
-          isActive ? 'text-ink' : 'text-hint',
-        )
-      }
-    >
-      <HugeiconsIcon icon={item.icon} size={19} aria-hidden />
-      {item.label}
-    </NavLink>
-  );
-}
-
 /** Live countdown in the header so the next draw is never more than a glance away. */
-function DrawPill() {
+function DrawPill({ compact = false }: { compact?: boolean }) {
   const { nextDrawAt, drawsCompleted } = usePoolStats();
   const remaining = useCountdown(nextDrawAt);
 
@@ -160,7 +253,12 @@ function DrawPill() {
   const ready = remaining <= 0;
 
   return (
-    <span className="btn-secondary inline-flex h-9 items-center gap-2 rounded-full px-3 max-sm:hidden sm:h-10">
+    <span
+      className={cn(
+        'btn-secondary inline-flex items-center gap-2 rounded-full',
+        compact ? 'h-9 px-2.5' : 'h-10 px-3',
+      )}
+    >
       <span className="relative grid size-2 place-items-center">
         <span
           className={cn(
@@ -170,19 +268,21 @@ function DrawPill() {
         />
         <span className={cn('size-2 rounded-full', ready ? 'bg-accent' : 'bg-[rgba(0,0,0,0.25)]')} />
       </span>
-      <span className="numeral text-[13px] font-bold text-ink">
-        {ready ? 'Draw ready' : formatCountdown(remaining)}
+      <span className="numeral text-[12px] font-bold text-ink sm:text-[13px]">
+        {ready ? 'Ready' : formatCountdown(remaining)}
       </span>
-      <span className="text-[11px] font-bold text-hint max-lg:hidden">
-        {`#${Number(drawsCompleted) + 1}`}
-      </span>
+      {!compact ? (
+        <span className="text-[11px] font-bold text-hint max-xl:hidden">
+          {`#${Number(drawsCompleted) + 1}`}
+        </span>
+      ) : null}
     </span>
   );
 }
 
 function NoLossNote() {
   return (
-    <div className="glass-gold mt-auto rounded-lg p-3.5">
+    <div className="glass-gold rounded-xl p-3.5">
       <div className="flex items-center gap-2 text-accent-deep">
         <HugeiconsIcon icon={GiftIcon} size={16} aria-hidden />
         <span className="text-[11px] font-bold tracking-[0.12em] uppercase">No loss</span>

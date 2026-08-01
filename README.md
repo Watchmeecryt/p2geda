@@ -33,7 +33,7 @@ Depositors always deposit **one asset (cUSDC)**. Morpho “exposures” (cbBTC /
 | cUSDCMock | [`0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639`](https://sepolia.etherscan.io/address/0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639) |
 | Admin / owner (demo) | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
 
-Deposit window **2 minutes** · draw **4 minutes** after window closes (~6 minutes end-to-end) · idle redraw every **4 minutes** after `lastDrawAt` without a new deposit bus · prize share **80% of the full reserve** at draw time · deploy block **`11395134`**.  
+Deposit window **2 minutes** · draw **4 minutes** after window closes (~6 minutes end-to-end) · keeper draws only after a closed deposit bus · admin can idle-redraw every **4 minutes** after `lastDrawAt` without a new bus · prize share **80% of the full reserve** at draw time · deploy block **`11395134`**.  
 Full JSON: [`contracts/deployments/sepolia.json`](./contracts/deployments/sepolia.json).
 
 ### Public metrics (aggregates only)
