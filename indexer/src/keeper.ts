@@ -35,8 +35,8 @@ import {
  * DRAW LEG
  *   Before draw: EIP-712 **userDecrypt** of `_prizeReserve` (same path as Admin UI —
  *   never `makePubliclyDecryptable`), size prize-per-draw to `prizeShareBps`, then `draw()`.
- *   Only after a deposit bus closes (`depositWindowClosesAt != 0` and due).
- *   Idle redraws (no new deposits) are admin-only.
+ *   Bus draws are permissionless once due; idle redraws (no new deposits) are owner-only.
+ *   The app also exposes a public **Draw winner** button for the bus path.
  *
  * Same OWNER_PRIVATE_KEY as vault.owner(). Mainnet: swap sepolia → mainnet + API key
  * in relayer.ts; point VAULT_ADDRESS / yield at Morpho.

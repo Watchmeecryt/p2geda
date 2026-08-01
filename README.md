@@ -4,12 +4,11 @@ Confidential **no-loss prize savings** on the [Zama Protocol](https://docs.zama.
 
 | | |
 |--|--|
-| **Live app** | **[https://p-u-u-l-cw.netlify.app/](https://p-u-u-l-cw.netlify.app/)** |
 | **Network** | Ethereum Sepolia |
 | **GitHub** | [Watchmeecryt/p2geda](https://github.com/Watchmeecryt/p2geda) |
 | **Stack** | Vite + React (`app/`) · Hardhat / fhEVM (`contracts/`) · Node indexer + keeper (`indexer/`) |
 
-Connect a wallet on Sepolia → Pool → faucet → wrap → deposit → decrypt your balance → wait for a draw (or Admin) → claim / withdraw.
+Connect a wallet on Sepolia → Pool → faucet → wrap → deposit → decrypt your balance → wait for the countdown (or click **Draw winner** when ready) → claim / withdraw.
 
 ---
 
@@ -18,19 +17,20 @@ Connect a wallet on Sepolia → Pool → faucet → wrap → deposit → decrypt
 1. **Faucet / wrap** — Mint official Zama **USDC Mock**, wrap to **cUSDCMock** (ERC-7984).
 2. **Deposit** — `confidentialTransferAndCall` into `ConfidentialPrizeVault`. Your principal is an encrypted `euint64` balance.
 3. **Deposit bus** — First deposit opens a **120s** window. More deposits join the same bus. After close, the keeper parks aggregate TVL into the yield venue.
-4. **Draw** — **240s** after the window closes, the keeper (or Admin) runs `draw()`:
+4. **Draw** — **240s** after the window closes (and yield has been harvested into the reserve), **anyone** may call `draw()` — the Draws page **Draw winner** button, or the keeper:
    - Onchain `FHE.randEuint64()`
    - Deposit-weighted selection over **encrypted** balances (no plaintext sizes)
    - Winner’s encrypted claimable increases; everyone else gets an encrypted zero
 5. **Claim** — Winner (or any depositor — non-winners transfer encrypted zero) claims via confidential transfer; decrypt winnings with **EIP-712**.
 6. **Withdraw** — Exit with **full principal** anytime (no loss).
 
-**Keeper vs Admin**
+**Who can draw**
 
-| Who | When they draw |
-|-----|----------------|
-| **Keeper** | Only after a **closed deposit bus** + draw interval |
-| **Admin** | Can also idle-redraw after `lastDrawAt + interval` with no new deposits (yield still funds the reserve) |
+| Who | When |
+|-----|------|
+| **Anyone** (default) | After a **closed deposit bus** + draw interval — click **Draw winner** on Draws |
+| **Keeper** | Same bus path; on mainnet this is the usual automation so nobody clicks |
+| **Admin** | Idle redraw after `lastDrawAt + interval` with **no** new deposit bus (owner-only) |
 
 Prize size at draw: owner **EIP-712 userDecrypt** of the encrypted prize reserve → set prize-per-draw to **`prizeShareBps`** (default **80%**) → `draw()`. The pot is **not** made publicly decryptable for that step.
 
@@ -100,25 +100,16 @@ On Sepolia the prize vault’s yield venue is **`MockYield4626`** — an ERC-462
 
 | What | Address |
 |------|---------|
-| Prize vault | [`0xEAf056275906F9541E6E35Ab9666ae603CF40758`](https://sepolia.etherscan.io/address/0xEAf056275906F9541E6E35Ab9666ae603CF40758) |
-| MockYield4626 | [`0x4ad58b8a48258ad1dBFF1CB983285237ae8d435d`](https://sepolia.etherscan.io/address/0x4ad58b8a48258ad1dBFF1CB983285237ae8d435d) |
+| Prize vault | [`0x1f7B0b56FcaeF3413F2A75bcCDD81E9C0de8b4ce`](https://sepolia.etherscan.io/address/0x1f7B0b56FcaeF3413F2A75bcCDD81E9C0de8b4ce) |
+| MockYield4626 | [`0xe827417d40A74f0eE566424079aE0eAe0eBA5728`](https://sepolia.etherscan.io/address/0xe827417d40A74f0eE566424079aE0eAe0eBA5728) |
 | USDC Mock (faucet) | [`0x9b5Cd13b8eFbB58Dc25A05CF411D8056058aDFfF`](https://sepolia.etherscan.io/address/0x9b5Cd13b8eFbB58Dc25A05CF411D8056058aDFfF) |
 | cUSDCMock | [`0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639`](https://sepolia.etherscan.io/address/0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639) |
 | Admin / owner (demo) | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
 
-Deposit window **120s** · draw delay **240s** · deploy block **`11395134`**.  
+Deposit window **120s** · draw delay **240s** · deploy block **`11397799`**.  
 JSON: [`contracts/deployments/sepolia.json`](./contracts/deployments/sepolia.json).
 
-### Demo admin wallet (reviewers)
-
-Sepolia-only. Do **not** send mainnet funds.
-
-| | |
-|--|--|
-| Address | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
-| Private key | `0x35273d0406fb4ffc60439748ba596225a7b396d03ac5ae2d328b26fd7c944431` |
-
-Owns the live vault. Use the same key as `OWNER_PRIVATE_KEY` for the keeper. In-app faucet: Pool → Use faucet.
+Bus draws are **permissionless** — any wallet can click **Draw winner** on Draws when the countdown is due. No demo private key is published in this repo. Vault owner address (for Admin / idle redraws): `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9`. In-app faucet: Pool → Use faucet.
 
 ---
 
@@ -165,7 +156,7 @@ Live site: **[https://p-u-u-l-cw.netlify.app/](https://p-u-u-l-cw.netlify.app/)*
 
 ```bash
 cd indexer
-cp .env.example .env   # RPC_URL, VAULT_ADDRESS, DEPLOYMENT_BLOCK, OWNER_PRIVATE_KEY, Supabase…
+cp .env.example .env   # RPC_URL, VAULT_ADDRESS, DEPLOYMENT_BLOCK, Supabase… (+ optional OWNER_PRIVATE_KEY for allocate/harvest)
 npm install
 npm start              # indexer + keeper together
 # or: npm run keeper / npm run keeper:once

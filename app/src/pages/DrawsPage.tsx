@@ -58,6 +58,13 @@ export function DrawsPage() {
     }
   }, [actions, journal, position]);
 
+  const runDraw = useCallback(async () => {
+    if (await actions.triggerDraw()) {
+      stats.refetch();
+      position.refetch();
+    }
+  }, [actions, stats, position]);
+
   return (
     <div>
       <PageHeader
@@ -70,14 +77,19 @@ export function DrawsPage() {
         <div className="mt-8 grid gap-5">
           <NextDrawCard stats={stats} />
           <ConnectPrompt
-            title="Connect to see your winnings"
-            description="Draws run whether or not you are watching. Connect to reveal your encrypted prize balance and claim it."
+            title="Connect to draw or claim"
+            description="When the countdown hits zero, any connected wallet can draw a winner. Connect to run the draw, reveal your encrypted prize balance, and claim."
           />
         </div>
       ) : (
         <div className="mt-8 grid gap-5">
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] lg:items-start">
-            <NextDrawCard stats={stats} />
+            <NextDrawCard
+              stats={stats}
+              canDraw
+              drawing={actions.activeAction === 'draw'}
+              onDraw={runDraw}
+            />
             <ClaimCard
               view={view}
               claimable={claimable}

@@ -73,11 +73,15 @@ npm run start:keeper    # yield/draw keeper only (local)
 Point the service **Root Directory** at `indexer`. Nixpacks runs `npm ci` then
 `npm start`, which launches **both** the log indexer (`src/run.ts`) and the
 keeper (`src/keeper.ts`) under one deployment with the same env vars
-(`RPC_URL`, `VAULT_ADDRESS`, Supabase keys, `OWNER_PRIVATE_KEY`, …).
+(`RPC_URL`, `VAULT_ADDRESS`, Supabase keys, optional `OWNER_PRIVATE_KEY` for allocate/harvest, …).
 
 ## Draw keeper
 
-Uses **`@zama-fhe/sdk` RelayerNode** plus the vault owner key. Each tick:
+Uses **`@zama-fhe/sdk` RelayerNode** plus the vault owner key for **allocate / harvest /
+prize sizing**. Bus **`draw()` is permissionless** — any wallet (or the Draws UI) can
+call it when the deposit window and interval have elapsed; idle redraws stay owner-only.
+
+Each tick:
 
 1. **Allocate** (if `allocatedUnderlying == 0`): `requestTotalPrincipalReveal` →
    `publicDecrypt` → encrypt unwrap → `requestAllocate` → `publicDecrypt` burnt
@@ -85,22 +89,24 @@ Uses **`@zama-fhe/sdk` RelayerNode** plus the vault owner key. Each tick:
 2. **Accrue** fake APR into MockYield4626 (clear venue)
 3. **Harvest + encrypt**: `harvestClear` → encrypt **100%** into reserve →
    `setPrizePerDraw` to only `prizeShareBps` (padding stays encrypted in reserve)
-4. **Draw** when `nextDrawAt` is due
+4. **Draw** when `nextDrawAt` is due (same permissionless bus path as the UI)
 
 | Knob | Where it lives |
 | --- | --- |
 | Draw interval | Onchain `DRAW_INTERVAL_SECONDS` at deploy |
 | Prize share of each harvest paid per draw | Onchain `prizeShareBps` (default 8000 = 80%; rest stays in encrypted reserve) |
 | Poll interval | `KEEPER_POLL_INTERVAL_MS` |
-| Signer + RelayerNode identity | `OWNER_PRIVATE_KEY` must match `vault.owner()` |
+| Signer + RelayerNode identity | `OWNER_PRIVATE_KEY` must match `vault.owner()` (allocate / harvest / idle redraw only) |
 
 ```bash
 npm run keeper        # forever
 npm run keeper:once   # one tick
 ```
 
-Needs `RPC_URL`, `VAULT_ADDRESS`, `OWNER_PRIVATE_KEY`. Does **not** need Supabase.
-Sepolia RelayerNode needs no API key; mainnet cutover is in `src/relayer.ts`.
+Needs `RPC_URL`, `VAULT_ADDRESS`, and `OWNER_PRIVATE_KEY` for the allocate/harvest legs.
+Does **not** need Supabase. Sepolia RelayerNode needs no API key; mainnet cutover is in
+`src/relayer.ts`. Bus draws do **not** require publishing an owner key — anyone can call
+`draw()` when due.
 
 ## Troubleshooting
 
@@ -144,6 +150,6 @@ the rest. Provide the same variables as `.env.example` in the Railway dashboard.
 Run **two** workers if you want both indexing and automated draws:
 
 1. Start command `npm start` — log indexer (needs Supabase + RPC).
-2. Start command `npm run keeper` — draw keeper (needs `OWNER_PRIVATE_KEY` + RPC).
+2. Start command `npm run keeper` — allocate / harvest keeper (optional `OWNER_PRIVATE_KEY` + RPC; bus draw is permissionless).
 
 Neither process is a web service, so they need no port binding or health check.

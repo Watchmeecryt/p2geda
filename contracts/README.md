@@ -64,11 +64,11 @@ VITE_CONFIPOOL_VAULT_ADDRESS=0x...
 
 | Field | Value |
 |---|---|
-| Vault | [`0xEAf056275906F9541E6E35Ab9666ae603CF40758`](https://sepolia.etherscan.io/address/0xEAf056275906F9541E6E35Ab9666ae603CF40758) |
-| MockYield4626 | [`0x4ad58b8a48258ad1dBFF1CB983285237ae8d435d`](https://sepolia.etherscan.io/address/0x4ad58b8a48258ad1dBFF1CB983285237ae8d435d) |
+| Vault | [`0x1f7B0b56FcaeF3413F2A75bcCDD81E9C0de8b4ce`](https://sepolia.etherscan.io/address/0x1f7B0b56FcaeF3413F2A75bcCDD81E9C0de8b4ce) |
+| MockYield4626 | [`0xe827417d40A74f0eE566424079aE0eAe0eBA5728`](https://sepolia.etherscan.io/address/0xe827417d40A74f0eE566424079aE0eAe0eBA5728) |
 | Owner / admin | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
 | Deposit window / draw delay | 120s / 240s |
-| Deploy block | `11395134` |
+| Deploy block | `11397799` |
 
 Read live vault state (owner, tokens, draw count, reserve flags) without a wallet:
 
@@ -101,7 +101,7 @@ Only the owner may use that tag. This is the **mock yield source** for the Sepol
 ### Configure / draw / claim
 
 1. Owner calls `setPrizePerDraw(encryptedAmount, proof)`.
-2. Owner **or the draw keeper** calls `draw()` after each interval. `draw()` has no encrypted inputs — FHE randomness and weighting run onchain — so the keeper is a plain owner-signed transaction (see [`../indexer`](../indexer#draw-keeper)).
+2. After a closed deposit bus + draw interval, **anyone** may call `draw()` (Draws UI **Draw winner**, or the keeper). Idle redraw with no open bus stays **owner-only**. `draw()` has no encrypted inputs — FHE randomness and weighting run onchain (see [`../indexer`](../indexer#draw-keeper)).
 3. Every depositor may call `claim()`. The encrypted amount is zero for non-winners, so a claim transaction alone does not prove who won.
 
 The random ticket is computed as:

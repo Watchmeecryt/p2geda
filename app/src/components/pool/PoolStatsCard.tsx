@@ -80,9 +80,10 @@ export function PoolStatsCard({ stats }: { stats: PoolStats }) {
       </dl>
 
       <p className="mt-5 border-t border-hairline pt-4 text-[0.76rem] leading-relaxed text-hint">
-        Each batch: {Number(stats.depositWindowDuration)}s deposit window, then the keeper parks
-        the aggregate in MockYield and draws {Number(stats.drawInterval)}s after the window closes.
-        With no new deposit bus, the keeper does not draw — only Admin can.
+        Each batch: {Number(stats.depositWindowDuration)}s deposit window, then capital parks in
+        MockYield and the draw is due {Number(stats.drawInterval)}s after close. When ready,{' '}
+        <span className="font-semibold text-ink">anyone</span> can run the draw (or the keeper
+        does). Idle redraws without a new bus stay admin-only.
       </p>
     </Card>
   );

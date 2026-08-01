@@ -269,10 +269,10 @@ contract ConfidentialPrizeVault is
     }
 
     /// @notice Runs one encrypted, deposit-weighted draw.
-    /// @dev After a deposit bus closes, due at `closesAt + drawInterval`. After a draw, if no
-    ///      new bus opens, another draw is due at `lastDrawAt + drawInterval` so accrued yield
-    ///      can keep funding prizes without waiting for fresh deposits.
-    function draw() external onlyOwner {
+    /// @dev After a deposit bus closes, anyone may call once `closesAt + drawInterval` is due
+    ///      (demo / permissionless keeper). Idle redraw with no open bus
+    ///      (`lastDrawAt + drawInterval`) remains owner-only.
+    function draw() external {
         if (!prizePerDrawConfigured) revert PrizeNotConfigured();
         if (!prizeReserveFunded) revert PrizeReserveNotFunded();
         if (_depositors.length == 0) revert NoDepositors();
@@ -283,6 +283,9 @@ contract ConfidentialPrizeVault is
             }
         } else if (lastDrawAt == 0) {
             revert DepositWindowNotOpen();
+        } else if (msg.sender != owner()) {
+            // Idle path (no new deposit bus): admin / automated owner key only.
+            revert OwnableUnauthorizedAccount(msg.sender);
         }
 
         uint256 dueAt = nextDrawAt();

@@ -2,14 +2,21 @@
   "chainId": 11155111,
   "network": "sepolia",
   "deployer": "0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9",
-  "vault": "0xEAf056275906F9541E6E35Ab9666ae603CF40758",
-  "yieldVault": "0x4ad58b8a48258ad1dBFF1CB983285237ae8d435d",
+  "vault": "0x1f7B0b56FcaeF3413F2A75bcCDD81E9C0de8b4ce",
+  "yieldVault": "0xe827417d40A74f0eE566424079aE0eAe0eBA5728",
   "underlyingToken": "0x9b5Cd13b8eFbB58Dc25A05CF411D8056058aDFfF",
   "confidentialToken": "0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639",
   "depositWindow": 120,
   "drawInterval": 240,
   "yieldAprBps": 8000,
-  "deploymentBlock": 11395134,
-  "deployedAt": "2026-08-01T08:09:49.570Z",
-  "note": "Batch deposit window + delayed draw + idle redraw + updatable reveal thresholds."
+  "deploymentBlock": 11397799,
+  "deployTx": "0x0fce4f0288366ff01a9a264883f9f9259e2a23ffd4ba2533f4a09f00bef18851",
+  "deployedAt": "2026-08-01T17:18:59.275Z",
+  "features": [
+    "permissionless bus draw() after window close + drawInterval",
+    "idle redraw (no bus) remains owner-only"
+  ],
+  "note": "Batch deposit window + delayed draw. Update VITE_CONFIPOOL_VAULT_ADDRESS and indexer VAULT_ADDRESS / DEPLOYMENT_BLOCK.",
+  "previousVault": "0xEAf056275906F9541E6E35Ab9666ae603CF40758",
+  "previousYieldVault": "0x4ad58b8a48258ad1dBFF1CB983285237ae8d435d"
 }
