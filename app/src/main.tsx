@@ -25,7 +25,7 @@ createRoot(document.getElementById('root')!).render(
               fontSize: '0.86rem',
               fontWeight: 500,
             },
-            success: { iconTheme: { primary: '#e6b800', secondary: '#111111' } },
+            success: { iconTheme: { primary: '#ff6c2f', secondary: '#111111' } },
             error: { iconTheme: { primary: '#dd3232', secondary: '#ffffff' } },
           }}
         />

@@ -22,7 +22,10 @@ export function DrawTimeline({ wins }: { wins: WinEntry[] }) {
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="font-bold text-ink">Draw history</h3>
-            <p className="mt-1 text-[0.84rem] text-muted">Every draw is onchain. Who won is not.</p>
+            <p className="mt-1 text-[0.84rem] text-muted">
+              Draws come from the indexer. Who won stays encrypted — only your decrypted claimable
+              can mark a row as yours.
+            </p>
           </div>
           <Badge tone="neutral">{draws.length} total</Badge>
         </div>
@@ -60,12 +63,10 @@ export function DrawTimeline({ wins }: { wins: WinEntry[] }) {
                   </p>
                 </div>
 
-                {win ? (
+                {win && win.amount !== '0' ? (
                   <Badge tone="accent">
                     <HugeiconsIcon icon={ChampionIcon} size={13} aria-hidden />
-                    {win.amount !== '0'
-                      ? `You won ${formatConfidential(BigInt(win.amount))}`
-                      : 'You won'}
+                    You won {formatConfidential(BigInt(win.amount))}
                   </Badge>
                 ) : (
                   <Badge tone="neutral">Winner encrypted</Badge>

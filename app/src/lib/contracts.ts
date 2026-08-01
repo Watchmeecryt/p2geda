@@ -12,13 +12,13 @@ function envAddress(raw: string | undefined, fallback: Address): Address {
 
 export const VAULT_ADDRESS = envAddress(
   import.meta.env.VITE_CONFIPOOL_VAULT_ADDRESS,
-  '0xB92cAaBca6641E8EA43FCB2804d2f8D113dA393A',
+  '0xEAf056275906F9541E6E35Ab9666ae603CF40758',
 );
 
 /** MockYield4626 (Morpho-like). Zero address means the live vault has no yield wired yet. */
 export const YIELD_VAULT_ADDRESS = envAddress(
   import.meta.env.VITE_YIELD_VAULT_ADDRESS,
-  '0xF43FC2c271E366aFC2eC84213a3AC5543098Bc43',
+  '0x4ad58b8a48258ad1dBFF1CB983285237ae8d435d',
 );
 
 export const YIELD_VAULT_CONFIGURED =
@@ -236,10 +236,38 @@ export const VAULT_ABI = [
   },
   {
     type: 'function',
-    name: 'MIN_DRAWS_BEFORE_PUBLIC_REVEAL',
+    name: 'lastPublicTvlRevealHandle',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'bytes32' }],
+  },
+  {
+    type: 'function',
+    name: 'minDrawsBeforePublicReveal',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'minDepositsBeforePublicTvlReveal',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'setMinDrawsBeforePublicReveal',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'value', type: 'uint256' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'setMinDepositsBeforePublicTvlReveal',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'value', type: 'uint256' }],
+    outputs: [],
   },
   {
     type: 'function',
@@ -328,6 +356,13 @@ export const VAULT_ABI = [
   {
     type: 'function',
     name: 'requestTotalPrizesPaidReveal',
+    stateMutability: 'nonpayable',
+    inputs: [],
+    outputs: [{ type: 'bytes32' }],
+  },
+  {
+    type: 'function',
+    name: 'requestPublicTvlReveal',
     stateMutability: 'nonpayable',
     inputs: [],
     outputs: [{ type: 'bytes32' }],

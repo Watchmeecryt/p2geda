@@ -26,11 +26,14 @@ export type PoolStats = {
   depositorCount: bigint;
   maxDepositors: bigint;
   minDrawsBeforeReveal: bigint;
+  minDepositsBeforeTvlReveal: bigint;
   prizeConfigured: boolean;
   reserveFunded: boolean;
   reserveTag: Hex | undefined;
   revealedHandle: Hex | undefined;
+  publicTvlHandle: Hex | undefined;
   totalPrizesPaidHandle: Hex | undefined;
+  totalPrincipalHandle: Hex | undefined;
   isLoading: boolean;
   refetch: () => void;
 };
@@ -51,12 +54,15 @@ export function usePoolStats(): PoolStats {
       { ...VAULT_CONTRACT, functionName: 'drawsCompleted' },
       { ...VAULT_CONTRACT, functionName: 'depositorCount' },
       { ...VAULT_CONTRACT, functionName: 'MAX_DEPOSITORS' },
-      { ...VAULT_CONTRACT, functionName: 'MIN_DRAWS_BEFORE_PUBLIC_REVEAL' },
+      { ...VAULT_CONTRACT, functionName: 'minDrawsBeforePublicReveal' },
       { ...VAULT_CONTRACT, functionName: 'prizePerDrawConfigured' },
       { ...VAULT_CONTRACT, functionName: 'prizeReserveFunded' },
       { ...VAULT_CONTRACT, functionName: 'RESERVE_DEPOSIT_TAG' },
       { ...VAULT_CONTRACT, functionName: 'lastTotalPaidRevealHandle' },
       { ...VAULT_CONTRACT, functionName: 'confidentialTotalPrizesPaid' },
+      { ...VAULT_CONTRACT, functionName: 'minDepositsBeforePublicTvlReveal' },
+      { ...VAULT_CONTRACT, functionName: 'lastPublicTvlRevealHandle' },
+      { ...VAULT_CONTRACT, functionName: 'confidentialTotalPrincipal' },
     ],
     query: { refetchInterval: POLL_MS },
   });
@@ -82,6 +88,9 @@ export function usePoolStats(): PoolStats {
     reserveTag: value<Hex | undefined>(14, undefined),
     revealedHandle: value<Hex | undefined>(15, undefined),
     totalPrizesPaidHandle: value<Hex | undefined>(16, undefined),
+    minDepositsBeforeTvlReveal: value(17, 3n),
+    publicTvlHandle: value<Hex | undefined>(18, undefined),
+    totalPrincipalHandle: value<Hex | undefined>(19, undefined),
     isLoading,
     refetch: () => void refetch(),
   };

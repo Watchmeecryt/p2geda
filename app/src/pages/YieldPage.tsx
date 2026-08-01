@@ -207,7 +207,7 @@ export function YieldPage() {
 
       <div className="mt-8 grid gap-5">
         <Card className="p-0">
-          <div className="relative overflow-hidden rounded-t-xl border-b border-[var(--color-border-light)] bg-[linear-gradient(135deg,#f7f7f7_0%,#fff8dc_48%,#ffffff_100%)] px-5 py-6 sm:px-6">
+          <div className="relative overflow-hidden rounded-t-xl border-b border-[var(--color-border-light)] bg-[linear-gradient(135deg,#f7f7f7_0%,#fff0e9_48%,#ffffff_100%)] px-5 py-6 sm:px-6">
             <div className="flex flex-wrap items-start gap-4">
               <div className="relative shrink-0">
                 <img

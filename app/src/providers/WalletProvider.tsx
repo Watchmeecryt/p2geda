@@ -10,7 +10,7 @@ const queryClient = new QueryClient({
 });
 
 const confipoolRainbowTheme = lightTheme({
-  accentColor: '#ffd208',
+  accentColor: '#ff6c2f',
   accentColorForeground: '#000000',
   borderRadius: 'large',
   fontStack: 'system',

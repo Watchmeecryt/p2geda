@@ -10,7 +10,6 @@ import { NextDrawCard } from '@/components/draws/NextDrawCard';
 import { DrawTimeline } from '@/components/draws/DrawTimeline';
 import { WinnerModal } from '@/components/draws/WinnerModal';
 import { useConfiPoolActions } from '@/hooks/useConfiPoolActions';
-import { useMyPrizeClaims } from '@/hooks/usePoolHistory';
 import { usePoolStats, useUserPosition } from '@/hooks/usePoolData';
 import { usePrivateView } from '@/hooks/usePrivateView';
 import { useWinJournal } from '@/hooks/useWinJournal';
@@ -51,7 +50,6 @@ export function DrawsPage() {
     drawsCompleted: Number(stats.drawsCompleted),
     enabled: view.revealed && !view.decrypting,
   });
-  const { data: claims = [] } = useMyPrizeClaims();
 
   const claim = useCallback(async () => {
     if (await actions.claim()) {
@@ -89,19 +87,7 @@ export function DrawsPage() {
             />
           </div>
 
-          <DrawTimeline
-            wins={[
-              ...journal.wins,
-              ...claims
-                .filter((claim) => claim.drawId != null)
-                .filter((claim) => !journal.wins.some((win) => win.drawId === claim.drawId))
-                .map((claim) => ({
-                  drawId: claim.drawId!,
-                  amount: '0',
-                  at: claim.timestamp ?? 0,
-                })),
-            ]}
-          />
+          <DrawTimeline wins={journal.wins} />
         </div>
       )}
 

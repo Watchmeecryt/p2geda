@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils';
 
-/** Butter-yellow disc carrying the ConfiPool initial, matching the ConfiDrop mark. */
+/** Black disc (orange on dark) carrying the ConfiPool initial. */
 export function BrandMark({
   size = 32,
   className,

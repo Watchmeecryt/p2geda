@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 
-const COLORS = ['#ffd208', '#ffe46b', '#e6b800', '#111111', '#ffffff'];
+const COLORS = ['#ff6c2f', '#fe7c00', '#e85a1a', '#111111', '#ffffff'];
 
 /** Purely decorative celebration layer; hidden under prefers-reduced-motion via CSS. */
 export function Confetti({ pieces = 46 }: { pieces?: number }) {

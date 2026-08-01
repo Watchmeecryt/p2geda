@@ -64,11 +64,11 @@ VITE_CONFIPOOL_VAULT_ADDRESS=0x...
 
 | Field | Value |
 |---|---|
-| Vault | [`0xB92cAaBca6641E8EA43FCB2804d2f8D113dA393A`](https://sepolia.etherscan.io/address/0xB92cAaBca6641E8EA43FCB2804d2f8D113dA393A) |
-| MockYield4626 | [`0xF43FC2c271E366aFC2eC84213a3AC5543098Bc43`](https://sepolia.etherscan.io/address/0xF43FC2c271E366aFC2eC84213a3AC5543098Bc43) |
+| Vault | [`0xEAf056275906F9541E6E35Ab9666ae603CF40758`](https://sepolia.etherscan.io/address/0xEAf056275906F9541E6E35Ab9666ae603CF40758) |
+| MockYield4626 | [`0x4ad58b8a48258ad1dBFF1CB983285237ae8d435d`](https://sepolia.etherscan.io/address/0x4ad58b8a48258ad1dBFF1CB983285237ae8d435d) |
 | Owner / admin | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
 | Deposit window / draw delay | 120s / 240s |
-| Deploy block | `11392191` |
+| Deploy block | `11395134` |
 
 Read live vault state (owner, tokens, draw count, reserve flags) without a wallet:
 
@@ -114,13 +114,21 @@ This maps the FHE random word into the encrypted cumulative-balance range withou
 
 ### Public aggregate reveal
 
-After five completed draws, the owner calls:
+After **five completed draws**, the owner calls:
 
 ```solidity
 requestTotalPrizesPaidReveal()
 ```
 
-The current encrypted aggregate is marked publicly decryptable. The frontend can then use SDK `publicDecrypt` without an EIP-712 user signature. Later claims create a new aggregate handle, allowing another snapshot to be requested.
+After **three depositors**, the owner can also publish vault TVL for Metrics:
+
+```solidity
+requestPublicTvlReveal()
+```
+
+Each call marks the current encrypted aggregate publicly decryptable. The frontend Metrics page uses SDK `publicDecrypt` (no EIP-712). Later claims / deposits create a new handle, so another snapshot can be published.
+
+Keeper allocate still uses ungated `requestTotalPrincipalReveal()` so operations are not blocked by the Metrics deposit threshold.
 
 ## Test coverage
 

@@ -182,7 +182,7 @@ function TokenTile({
       className={cn(
         'rounded-md border px-4 py-3 shadow-separator-inset',
         accent
-          ? 'border-[rgba(230,184,0,0.45)] bg-[color-mix(in_srgb,var(--brand-yellow-500)_10%,#fff)]'
+          ? 'border-[rgba(232,90,26,0.45)] bg-[color-mix(in_srgb,var(--brand-yellow-500)_10%,#fff)]'
           : 'border-[var(--color-border-light)] bg-[color-mix(in_srgb,var(--background)_55%,#fff)]',
       )}
     >

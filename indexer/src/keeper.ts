@@ -531,8 +531,8 @@ async function maybeDraw(
     log('draw: skip — no depositors');
     return;
   }
-  // After a draw the vault resets the deposit window; `nextDrawAt` is 0 until the next
-  // batch opens. Treat 0 as "not scheduled" — otherwise `now < 0` is false and we spam draw().
+  // Idle after a draw: `nextDrawAt` is lastDrawAt + interval (repeat draws without a
+  // new deposit bus). `0` means nothing is scheduled (no depositors / never drawn).
   if (nextDrawAt === 0n) {
     log('draw: skip — no deposit batch open (waiting for next first deposit)');
     return;

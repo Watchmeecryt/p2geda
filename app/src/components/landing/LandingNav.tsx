@@ -6,32 +6,30 @@ import { BrandMark } from '@/components/Brand';
 const CHIPS = [
   { href: '#how-it-works', label: 'How it works' },
   { href: '#privacy', label: 'Privacy' },
+  { href: '#faq', label: 'FAQ' },
 ];
 
 export function LandingNav() {
   return (
-    <header className="landing-nav glass-card">
+    <header className="landing-nav">
       <div className="landing-nav__inner">
         <Link to="/" className="landing-brand landing-nav__brand">
-          <BrandMark size={32} />
-          ConfiPool
+          <BrandMark size={28} />
+          <span>ConfiPool</span>
         </Link>
 
-        <div className="landing-nav__center">
+        <nav className="landing-nav__center" aria-label="Landing">
           {CHIPS.map((chip) => (
             <a key={chip.href} href={chip.href} className="landing-nav__chip">
               {chip.label}
             </a>
           ))}
-        </div>
+        </nav>
 
         <div className="landing-nav__actions">
-          <Link
-            to="/app"
-            className="btn-butter inline-flex min-h-10 items-center gap-2 rounded-full px-4 text-[0.9375rem] font-semibold transition-opacity hover:opacity-92"
-          >
+          <Link to="/app" className="landing-btn landing-btn--ink landing-btn--sm">
             Launch app
-            <HugeiconsIcon icon={ArrowRight01Icon} size={16} aria-hidden />
+            <HugeiconsIcon icon={ArrowRight01Icon} size={14} aria-hidden />
           </Link>
         </div>
       </div>

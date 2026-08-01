@@ -4,6 +4,7 @@ import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   Analytics01Icon,
+  ChartIncreaseIcon,
   DiceIcon,
   GiftIcon,
   SafeIcon,
@@ -23,6 +24,7 @@ const NAV: NavItem[] = [
   { to: '/app', label: 'Pool', icon: SafeIcon, end: true, hint: 'Deposit and withdraw' },
   { to: '/app/draws', label: 'Draws', icon: DiceIcon, hint: 'Next draw and claims' },
   { to: '/app/history', label: 'History', icon: Analytics01Icon, hint: 'Your activity' },
+  { to: '/app/metrics', label: 'Metrics', icon: ChartIncreaseIcon, hint: 'Public TVL and prizes' },
 ];
 
 const YIELD_ITEM: NavItem = {

@@ -5,6 +5,7 @@ import type { Hex } from 'viem';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   Analytics01Icon,
+  ChartIncreaseIcon,
   DiceIcon,
   MoneyBag02Icon,
   SafeIcon,
@@ -21,6 +22,7 @@ import { ConfidentialAmount } from '@/components/ConfidentialAmount';
 import { PrivateViewToggle } from '@/components/PrivateViewToggle';
 import { AmountModal } from '@/components/admin/AmountModal';
 import { RevealModal } from '@/components/admin/RevealModal';
+import { RevealThresholdsCard } from '@/components/admin/RevealThresholdsCard';
 import { useConfiPoolActions } from '@/hooks/useConfiPoolActions';
 import { useCountdown } from '@/hooks/useCountdown';
 import { useIsAdmin, usePoolStats } from '@/hooks/usePoolData';
@@ -206,14 +208,46 @@ export function AdminPage() {
           <ActionCard
             icon={Analytics01Icon}
             title="Publish total prizes paid"
-            body="Marks the aggregate of all claims publicly decryptable. Needs no signature to read, and unlocks only after the draw threshold."
+            body="Marks the aggregate of all claims publicly decryptable. Needs no signature to read, and unlocks only after the draw threshold. Visible on Metrics."
             cta="Open reveal"
             status={`${stats.drawsCompleted}/${stats.minDrawsBeforeReveal} draws`}
             tone={stats.drawsCompleted >= stats.minDrawsBeforeReveal ? 'success' : 'neutral'}
             onClick={() => setDialog('reveal')}
             disabled={actions.isRunning}
           />
+          <ActionCard
+            icon={ChartIncreaseIcon}
+            title="Publish vault TVL"
+            body="Marks the encrypted principal total publicly decryptable for Metrics. Unlocks after enough unique depositors so early single-deposit size cannot be inferred."
+            cta="Publish TVL"
+            status={`${stats.depositorCount}/${stats.minDepositsBeforeTvlReveal} depositors`}
+            tone={
+              stats.depositorCount >= stats.minDepositsBeforeTvlReveal ? 'success' : 'neutral'
+            }
+            onClick={() => void actions.requestPublicTvlReveal().then((ok) => ok && refresh())}
+            disabled={
+              actions.isRunning || stats.depositorCount < stats.minDepositsBeforeTvlReveal
+            }
+          />
         </div>
+
+        <RevealThresholdsCard
+          drawsThreshold={stats.minDrawsBeforeReveal}
+          depositsThreshold={stats.minDepositsBeforeTvlReveal}
+          busyDraws={actions.activeAction === 'setRevealThreshold'}
+          busyDeposits={actions.activeAction === 'setTvlThreshold'}
+          disabled={actions.isRunning}
+          onSaveDraws={async (value) => {
+            const ok = await actions.setMinDrawsBeforePublicReveal(value);
+            if (ok) refresh();
+            return ok;
+          }}
+          onSaveDeposits={async (value) => {
+            const ok = await actions.setMinDepositsBeforePublicTvlReveal(value);
+            if (ok) refresh();
+            return ok;
+          }}
+        />
 
         <Card>
           <div className="flex items-start gap-3">

@@ -285,6 +285,71 @@ export function useConfiPoolActions() {
     [runner, writeContractAsync],
   );
 
+  const requestPublicTvlReveal = useCallback(
+    () =>
+      runner.run(
+        'revealTvl',
+        [
+          {
+            label: 'Publishing vault TVL',
+            run: () =>
+              writeContractAsync({
+                address: VAULT_ADDRESS,
+                abi: VAULT_ABI,
+                chainId: sepolia.id,
+                functionName: 'requestPublicTvlReveal',
+              }),
+          },
+        ],
+        'Vault TVL is now publicly decryptable on Metrics.',
+      ),
+    [runner, writeContractAsync],
+  );
+
+  const setMinDrawsBeforePublicReveal = useCallback(
+    (value: bigint) =>
+      runner.run(
+        'setRevealThreshold',
+        [
+          {
+            label: 'Updating prizes-paid reveal threshold',
+            run: () =>
+              writeContractAsync({
+                address: VAULT_ADDRESS,
+                abi: VAULT_ABI,
+                chainId: sepolia.id,
+                functionName: 'setMinDrawsBeforePublicReveal',
+                args: [value],
+              }),
+          },
+        ],
+        'Prizes-paid reveal threshold updated.',
+      ),
+    [runner, writeContractAsync],
+  );
+
+  const setMinDepositsBeforePublicTvlReveal = useCallback(
+    (value: bigint) =>
+      runner.run(
+        'setTvlThreshold',
+        [
+          {
+            label: 'Updating TVL reveal threshold',
+            run: () =>
+              writeContractAsync({
+                address: VAULT_ADDRESS,
+                abi: VAULT_ABI,
+                chainId: sepolia.id,
+                functionName: 'setMinDepositsBeforePublicTvlReveal',
+                args: [value],
+              }),
+          },
+        ],
+        'TVL reveal threshold updated.',
+      ),
+    [runner, writeContractAsync],
+  );
+
   /**
    * Emergency bridge only — prefer RelayerNode allocate in the keeper
    * (publicDecrypt aggregate → encrypt unwrap → finalizeAllocate).
@@ -506,6 +571,9 @@ export function useConfiPoolActions() {
     fundReserve,
     triggerDraw,
     requestReveal,
+    requestPublicTvlReveal,
+    setMinDrawsBeforePublicReveal,
+    setMinDepositsBeforePublicTvlReveal,
     bootstrapAllocate,
     harvestAndFundPrize,
     accrueYield,

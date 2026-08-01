@@ -11,6 +11,7 @@ interface IConfidentialPrizeVault {
     event DrawCompleted(uint256 indexed drawId, bytes32 indexed encryptedPrizeHandle);
     event PrizeClaimed(address indexed account, bytes32 indexed amountHandle);
     event TotalPrizesPaidRevealRequested(uint256 indexed drawId, bytes32 indexed totalPaidHandle);
+    event PublicTvlRevealRequested(uint256 indexed depositorCount, bytes32 indexed totalPrincipalHandle);
     event YieldVaultSet(address indexed yieldVault);
     event AllocateRequested(bytes32 indexed unwrapRequestId);
     event YieldAllocated(uint256 underlyingAmount, uint256 totalAllocated);
@@ -19,6 +20,8 @@ interface IConfidentialPrizeVault {
     event TotalPrincipalRevealRequested(bytes32 indexed handle);
     event PrizeReserveRevealRequested(bytes32 indexed handle);
     event PrizeShareBpsUpdated(uint16 bps);
+    event MinDrawsBeforePublicRevealUpdated(uint256 value);
+    event MinDepositsBeforePublicTvlRevealUpdated(uint256 value);
     event DepositWindowOpened(uint256 indexed opensAt, uint256 indexed closesAt);
     event DepositWindowReset(uint256 indexed drawId);
 
@@ -47,8 +50,11 @@ interface IConfidentialPrizeVault {
 
     function setPrizePerDraw(externalEuint64 encryptedAmount, bytes calldata inputProof) external;
     function setPrizeShareBps(uint16 bps) external;
+    function setMinDrawsBeforePublicReveal(uint256 value) external;
+    function setMinDepositsBeforePublicTvlReveal(uint256 value) external;
     function setYieldVault(address yieldVault_) external;
     function requestTotalPrincipalReveal() external returns (bytes32);
+    function requestPublicTvlReveal() external returns (bytes32);
     function requestPrizeReserveReveal() external returns (bytes32);
     function bootstrapAllocate(uint256 underlyingAmount) external;
     function requestAllocate(externalEuint64 encryptedAmount, bytes calldata inputProof) external returns (bytes32);

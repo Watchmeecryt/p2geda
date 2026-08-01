@@ -27,16 +27,23 @@ Depositors always deposit **one asset (cUSDC)**. Morpho “exposures” (cbBTC /
 
 | What | Address |
 |------|---------|
-| Prize vault | [`0xB92cAaBca6641E8EA43FCB2804d2f8D113dA393A`](https://sepolia.etherscan.io/address/0xB92cAaBca6641E8EA43FCB2804d2f8D113dA393A) |
-| MockYield4626 | [`0xF43FC2c271E366aFC2eC84213a3AC5543098Bc43`](https://sepolia.etherscan.io/address/0xF43FC2c271E366aFC2eC84213a3AC5543098Bc43) |
+| Prize vault | [`0xEAf056275906F9541E6E35Ab9666ae603CF40758`](https://sepolia.etherscan.io/address/0xEAf056275906F9541E6E35Ab9666ae603CF40758) |
+| MockYield4626 | [`0x4ad58b8a48258ad1dBFF1CB983285237ae8d435d`](https://sepolia.etherscan.io/address/0x4ad58b8a48258ad1dBFF1CB983285237ae8d435d) |
 | USDC Mock (faucet) | [`0x9b5Cd13b8eFbB58Dc25A05CF411D8056058aDFfF`](https://sepolia.etherscan.io/address/0x9b5Cd13b8eFbB58Dc25A05CF411D8056058aDFfF) |
 | cUSDCMock | [`0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639`](https://sepolia.etherscan.io/address/0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639) |
 | Admin / owner (demo) | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
 
-Deposit window **2 minutes** · draw **4 minutes** after window closes (~6 minutes end-to-end) · prize share **80% of the full reserve** at draw time · deploy block **`11392191`**.  
+Deposit window **2 minutes** · draw **4 minutes** after window closes (~6 minutes end-to-end) · idle redraw every **4 minutes** after `lastDrawAt` without a new deposit bus · prize share **80% of the full reserve** at draw time · deploy block **`11395134`**.  
 Full JSON: [`contracts/deployments/sepolia.json`](./contracts/deployments/sepolia.json).
 
----
+### Public metrics (aggregates only)
+
+| Snapshot | Who publishes | Default threshold (admin-updatable) | What becomes public |
+|----------|---------------|--------------------------------------|---------------------|
+| **Vault TVL** (`requestPublicTvlReveal`) | Admin | ≥ **3** depositors (`setMinDepositsBeforePublicTvlReveal`) | Encrypted principal total — anyone can `publicDecrypt` |
+| **Prizes paid** (`requestTotalPrizesPaidReveal`) | Admin | ≥ **5** draws (`setMinDrawsBeforePublicReveal`) | Encrypted sum of claimed prizes |
+
+Thresholds are editable anytime on **Admin → Metrics reveal thresholds**.
 
 ## Demo admin wallet (for reviewers)
 
@@ -75,6 +82,9 @@ Best when you want the full allocate → accrue → harvest → encrypt → draw
    - `harvestClear` → encrypts **100%** into the prize reserve (does **not** overwrite prize-per-draw)
    - when the draw is due: reveals the reserve → sets prize-per-draw to **80% of the full pot** → `draw()`
 3. Winner claims on the Draws page.
+4. After enough draws / depositors, Admin publishes **prizes paid** / **TVL** → Metrics page publicDecrypt.
+
+Keeper sizing of prize-per-draw uses the encrypted reserve each cycle, so the clear prize amount moves as the pot grows (default **80%** of reserve via `prizeShareBps`).
 
 ```bash
 cd indexer
@@ -128,7 +138,7 @@ App env pointers (already filled in `.env.example` for the live Sepolia stack):
 
 | Folder | Role |
 |--------|------|
-| [`app/`](./app) | dApp — Pool, Yield, Draws, Admin, History |
+| [`app/`](./app) | dApp — Pool, Draws, History, Metrics, Yield, Admin |
 | [`contracts/`](./contracts) | `ConfidentialPrizeVault`, `MockYield4626`, deploy scripts |
 | [`indexer/`](./indexer) | Event indexer → Supabase + RelayerNode keeper |
 | [`supabase/`](./supabase) | SQL migrations for activity |
@@ -151,7 +161,7 @@ Design notes and research live in [`APPROACH.md`](./APPROACH.md), [`PROCESS.md`]
 | Surface | Visibility |
 |---------|------------|
 | Per-user balances & claimables | Encrypted (user decrypt) |
-| Aggregate TVL used for allocate | Publicly decrypted on purpose |
-| MockYield / Morpho share price & clear harvest | Public (normal ERC-4626) |
-| Prize reserve & prize-per-draw | Encrypted; draw prize is only `prizeShareBps` of harvest |
-| Who won | Not emitted; winner sees claimable via decrypt |
+| Aggregate TVL (Metrics publish) | Encrypted until admin `requestPublicTvlReveal` (≥3 depositors); then publicDecrypt |
+| Aggregate TVL (keeper allocate) | Also made decryptable operationally to size MockYield deposits |
+| Aggregate prizes paid | Encrypted until admin reveal (≥5 draws); then publicDecrypt |
+| Who won | Not emitted onchain; only your decrypted claimable can mark “You won” |

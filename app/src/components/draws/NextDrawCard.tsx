@@ -17,9 +17,12 @@ export function NextDrawCard({ stats }: { stats: PoolStats }) {
   const totalCycle = windowSecs + interval;
   const waitingForBus = stats.nextDrawAt === 0n;
   const windowOpen = stats.depositsOpen && stats.depositWindowClosesAt > 0n;
+  const idleRedraw = !waitingForBus && stats.depositWindowClosesAt === 0n && stats.lastDrawAt > 0n;
   const elapsed = waitingForBus
     ? 0
-    : Math.min(1, Math.max(0, (totalCycle - (windowOpen ? windowRemaining + interval : remaining)) / totalCycle));
+    : idleRedraw
+      ? Math.min(1, Math.max(0, (interval - remaining) / interval))
+      : Math.min(1, Math.max(0, (totalCycle - (windowOpen ? windowRemaining + interval : remaining)) / totalCycle));
   const live = stats.prizeConfigured && stats.reserveFunded;
   const ready = !waitingForBus && remaining === 0 && live;
   const stalled = !waitingForBus && remaining === 0 && !live;
@@ -28,11 +31,11 @@ export function NextDrawCard({ stats }: { stats: PoolStats }) {
     <div className="relative overflow-hidden rounded-xl border border-white/10 bg-ink p-6 shadow-[0_24px_60px_rgba(0,0,0,0.28)] sm:p-8">
       <div
         aria-hidden
-        className="pointer-events-none absolute -top-28 -right-16 size-80 rounded-full bg-[radial-gradient(circle,rgba(255,210,8,0.34),transparent_65%)]"
+        className="pointer-events-none absolute -top-28 -right-16 size-80 rounded-full bg-[radial-gradient(circle,rgba(255,108,47,0.34),transparent_65%)]"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-[0.22] [background-image:repeating-linear-gradient(90deg,rgba(255,210,8,0.14)_0_1px,transparent_1px_9px)] [mask-image:linear-gradient(180deg,#000,transparent_70%)]"
+        className="pointer-events-none absolute inset-0 opacity-[0.22] [background-image:repeating-linear-gradient(90deg,rgba(255,108,47,0.14)_0_1px,transparent_1px_9px)] [mask-image:linear-gradient(180deg,#000,transparent_70%)]"
       />
 
       <div className="relative flex flex-wrap items-start justify-between gap-5">
@@ -52,7 +55,9 @@ export function NextDrawCard({ stats }: { stats: PoolStats }) {
               ? `First deposit opens a ${formatCountdown(windowSecs)} bus; draw is due ${formatCountdown(interval)} after it closes.`
               : windowOpen
                 ? `Deposit bus still open (${formatCountdown(windowRemaining)} left). Draw follows ${formatCountdown(interval)} after close.`
-                : `Deposit bus closed. Draw due in ${formatCountdown(remaining)}.`}
+                : idleRedraw
+                  ? `No new bus — yield can keep funding the reserve. Next draw due in ${formatCountdown(remaining)}.`
+                  : `Deposit bus closed. Draw due in ${formatCountdown(remaining)}.`}
           </p>
         </div>
 
@@ -90,10 +95,14 @@ export function NextDrawCard({ stats }: { stats: PoolStats }) {
           {waitingForBus
             ? 'No batch is open yet. Deposit to start the next bus.'
             : ready
-              ? 'The batch timer has elapsed — the keeper can run the draw now.'
+              ? idleRedraw
+                ? 'Interval elapsed — admin or keeper can run another draw without a new deposit.'
+                : 'The batch timer has elapsed — the keeper can run the draw now.'
               : stalled
                 ? 'The timer has elapsed, but the prize reserve still needs funding before a draw can run.'
-                : 'Every depositor in this batch is entered automatically. There is nothing to opt into.'}
+                : idleRedraw
+                  ? 'Depositors stay entered. Accrued yield can fund the next prize without a fresh deposit bus.'
+                  : 'Every depositor in this batch is entered automatically. There is nothing to opt into.'}
         </p>
       </div>
     </div>

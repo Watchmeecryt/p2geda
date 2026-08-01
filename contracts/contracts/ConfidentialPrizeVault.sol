@@ -29,9 +29,13 @@ contract ConfidentialPrizeVault is
 {
     using SafeERC20 for IERC20;
 
-    uint256 public constant MIN_DRAWS_BEFORE_PUBLIC_REVEAL = 5;
     uint256 public constant MAX_DEPOSITORS = 32;
     bytes32 public constant RESERVE_DEPOSIT_TAG = keccak256("CONFIPOOL_PRIZE_RESERVE");
+
+    /// @notice Draws required before owner may publish total prizes paid (admin-updatable).
+    uint256 public minDrawsBeforePublicReveal = 5;
+    /// @notice Depositors required before owner may publish aggregate TVL (admin-updatable).
+    uint256 public minDepositsBeforePublicTvlReveal = 3;
 
     IERC7984 private immutable _confidentialToken;
     address private immutable _underlyingToken;
@@ -68,6 +72,8 @@ contract ConfidentialPrizeVault is
     /// @notice Pending unwrap request used by the allocate flow.
     bytes32 public pendingAllocateUnwrapId;
     bytes32 public lastTotalPrincipalRevealHandle;
+    /// @notice Last principal handle published for public metrics (gated by deposit threshold).
+    bytes32 public lastPublicTvlRevealHandle;
     /// @notice Last handle made publicly decryptable for `_prizeReserve` (keeper sizes draw prize).
     bytes32 public lastPrizeReserveRevealHandle;
     /// @notice Share of each harvested yield that becomes prize-per-draw (rest stays encrypted
@@ -99,6 +105,7 @@ contract ConfidentialPrizeVault is
     error NoPendingAllocate();
     error NoYieldToHarvest();
     error InsufficientYieldLiquidity();
+    error InvalidRevealThreshold();
     error InvalidPrizeShareBps();
 
     constructor(
@@ -151,10 +158,16 @@ contract ConfidentialPrizeVault is
         return address(_yieldVault);
     }
 
-    /// @notice Draw due time: `depositWindowClosesAt + drawInterval`, or 0 while no batch is open.
-    function nextDrawAt() external view returns (uint256) {
-        if (depositWindowClosesAt == 0) return 0;
-        return depositWindowClosesAt + _drawInterval;
+    /// @notice Draw due time.
+    /// @dev With an open batch: `depositWindowClosesAt + drawInterval`.
+    ///      Idle after a prior draw: `lastDrawAt + drawInterval` so yield-funded redraws
+    ///      do not require a new deposit bus. `0` means nothing is scheduled.
+    function nextDrawAt() public view returns (uint256) {
+        if (depositWindowClosesAt != 0) {
+            return depositWindowClosesAt + _drawInterval;
+        }
+        if (_depositors.length == 0 || lastDrawAt == 0) return 0;
+        return lastDrawAt + _drawInterval;
     }
 
     function depositorCount() external view returns (uint256) {
@@ -256,18 +269,24 @@ contract ConfidentialPrizeVault is
     }
 
     /// @notice Runs one encrypted, deposit-weighted draw.
-    /// @dev Eligible only after the deposit window has closed and `drawInterval` seconds have passed.
-    ///      Resets the deposit window so the next first deposit opens a fresh batch.
+    /// @dev After a deposit bus closes, due at `closesAt + drawInterval`. After a draw, if no
+    ///      new bus opens, another draw is due at `lastDrawAt + drawInterval` so accrued yield
+    ///      can keep funding prizes without waiting for fresh deposits.
     function draw() external onlyOwner {
         if (!prizePerDrawConfigured) revert PrizeNotConfigured();
         if (!prizeReserveFunded) revert PrizeReserveNotFunded();
         if (_depositors.length == 0) revert NoDepositors();
-        if (depositWindowClosesAt == 0) revert DepositWindowNotOpen();
-        if (block.timestamp < depositWindowClosesAt) {
-            revert DepositWindowStillOpen(depositWindowClosesAt);
+
+        if (depositWindowClosesAt != 0) {
+            if (block.timestamp < depositWindowClosesAt) {
+                revert DepositWindowStillOpen(depositWindowClosesAt);
+            }
+        } else if (lastDrawAt == 0) {
+            revert DepositWindowNotOpen();
         }
-        uint256 dueAt = depositWindowClosesAt + _drawInterval;
-        if (block.timestamp < dueAt) revert DrawTooEarly(dueAt);
+
+        uint256 dueAt = nextDrawAt();
+        if (dueAt == 0 || block.timestamp < dueAt) revert DrawTooEarly(dueAt);
 
         ebool hasPrincipal = FHE.gt(_totalPrincipal, 0);
         ebool reserveIsEnough = FHE.ge(_prizeReserve, _prizePerDraw);
@@ -303,9 +322,11 @@ contract ConfidentialPrizeVault is
             ++drawsCompleted;
         }
         lastDrawAt = block.timestamp;
-        depositWindowOpensAt = 0;
-        depositWindowClosesAt = 0;
-        emit DepositWindowReset(drawsCompleted);
+        if (depositWindowClosesAt != 0 || depositWindowOpensAt != 0) {
+            depositWindowOpensAt = 0;
+            depositWindowClosesAt = 0;
+            emit DepositWindowReset(drawsCompleted);
+        }
         emit DrawCompleted(drawsCompleted, euint64.unwrap(committedPrize));
     }
 
@@ -334,8 +355,8 @@ contract ConfidentialPrizeVault is
     /// @dev Public decryption needs no user EIP-712 signature. A later claim creates
     ///      a new aggregate handle, which may be revealed in a later snapshot.
     function requestTotalPrizesPaidReveal() external onlyOwner returns (bytes32 handle) {
-        if (drawsCompleted < MIN_DRAWS_BEFORE_PUBLIC_REVEAL) {
-            revert RevealThresholdNotMet(drawsCompleted, MIN_DRAWS_BEFORE_PUBLIC_REVEAL);
+        if (drawsCompleted < minDrawsBeforePublicReveal) {
+            revert RevealThresholdNotMet(drawsCompleted, minDrawsBeforePublicReveal);
         }
 
         handle = euint64.unwrap(_totalPrizesPaid);
@@ -355,6 +376,20 @@ contract ConfidentialPrizeVault is
         emit PrizeShareBpsUpdated(bps);
     }
 
+    /// @notice Update how many draws must complete before prizes-paid can be published.
+    function setMinDrawsBeforePublicReveal(uint256 value) external onlyOwner {
+        if (value == 0) revert InvalidRevealThreshold();
+        minDrawsBeforePublicReveal = value;
+        emit MinDrawsBeforePublicRevealUpdated(value);
+    }
+
+    /// @notice Update how many depositors must join before TVL can be published.
+    function setMinDepositsBeforePublicTvlReveal(uint256 value) external onlyOwner {
+        if (value == 0) revert InvalidRevealThreshold();
+        minDepositsBeforePublicTvlReveal = value;
+        emit MinDepositsBeforePublicTvlRevealUpdated(value);
+    }
+
     /// @notice Wire the Morpho-like ERC-4626 once. Asset must be this vault's underlying.
     function setYieldVault(address yieldVault_) external onlyOwner {
         if (yieldVault_ == address(0)) revert InvalidAddress();
@@ -365,13 +400,29 @@ contract ConfidentialPrizeVault is
     }
 
     /// @notice Make `_totalPrincipal` publicly decryptable so the keeper can size an allocate.
-    /// @dev Leaks aggregate TVL only — not per-depositor amounts.
+    /// @dev Leaks aggregate TVL only — not per-depositor amounts. Operational path (no deposit gate).
     function requestTotalPrincipalReveal() external onlyOwner returns (bytes32 handle) {
         handle = euint64.unwrap(_totalPrincipal);
         if (handle == lastTotalPrincipalRevealHandle) revert RevealAlreadyRequested(handle);
         FHE.makePubliclyDecryptable(_totalPrincipal);
         lastTotalPrincipalRevealHandle = handle;
         emit TotalPrincipalRevealRequested(handle);
+    }
+
+    /// @notice Publish aggregate TVL for the Metrics page after enough depositors have joined.
+    /// @dev Separate from the keeper allocate reveal so the UI only surfaces admin-published snapshots.
+    function requestPublicTvlReveal() external onlyOwner returns (bytes32 handle) {
+        uint256 count = _depositors.length;
+        if (count < minDepositsBeforePublicTvlReveal) {
+            revert RevealThresholdNotMet(count, minDepositsBeforePublicTvlReveal);
+        }
+
+        handle = euint64.unwrap(_totalPrincipal);
+        if (handle == lastPublicTvlRevealHandle) revert RevealAlreadyRequested(handle);
+
+        FHE.makePubliclyDecryptable(_totalPrincipal);
+        lastPublicTvlRevealHandle = handle;
+        emit PublicTvlRevealRequested(count, handle);
     }
 
     /// @notice Make `_prizeReserve` publicly decryptable so the keeper can size prize-per-draw.

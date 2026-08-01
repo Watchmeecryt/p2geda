@@ -1,14 +1,15 @@
 import { LandingClose } from '@/components/landing/LandingClose';
 import { LandingHero } from '@/components/landing/LandingHero';
 import { LandingNav } from '@/components/landing/LandingNav';
-import { LandingPreview } from '@/components/landing/LandingPreview';
+import { LandingPrivacy } from '@/components/landing/LandingPrivacy';
+import { LandingProof } from '@/components/landing/LandingProof';
 import { LandingStory } from '@/components/landing/LandingStory';
-import { LandingWorkflows } from '@/components/landing/LandingWorkflows';
 import { useScrollReveal } from '@/hooks/useScrollReveal';
 
 /**
- * Four stacked bands — light intro, warm cream story, white workflows, black
- * close — so the scroll reads as distinct chapters rather than one flat page.
+ * Five bands only:
+ * 1. Cream hero · 2. Cream how-it-works · 3. Orange privacy eye
+ * 4. Cream proof + FAQ · 5. Black close
  */
 export function LandingPage() {
   useScrollReveal();
@@ -27,14 +28,19 @@ export function LandingPage() {
 
         <section className="landing-zone landing-zone--story">
           <div className="landing-zone__inner">
-            <LandingPreview />
             <LandingStory />
+          </div>
+        </section>
+
+        <section className="landing-zone landing-zone--privacy">
+          <div className="landing-zone__inner">
+            <LandingPrivacy />
           </div>
         </section>
 
         <section className="landing-zone landing-zone--workflows">
           <div className="landing-zone__inner">
-            <LandingWorkflows />
+            <LandingProof />
           </div>
         </section>
 

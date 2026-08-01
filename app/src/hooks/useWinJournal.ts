@@ -18,8 +18,9 @@ type Journal = {
 
 const EMPTY: Journal = { address: null, lastClaimable: '0', lastDrawId: 0, wins: [] };
 
+/** v3 drops the stale v1/v2 journals that falsely tagged every draw as “YOU WON 0.7999”. */
 function storageKey(address: string): string {
-  return `confipool.wins.${address.toLowerCase()}`;
+  return `confipool.wins.v3.${address.toLowerCase()}`;
 }
 
 function readJournal(address: string | null): Journal {
@@ -45,18 +46,14 @@ function writeJournal(journal: Journal): void {
     const { address, ...persisted } = journal;
     window.localStorage.setItem(storageKey(address), JSON.stringify(persisted));
   } catch {
-    // A full or blocked localStorage only costs the local journal, never onchain state.
+    // Ignore quota / private-mode failures.
   }
 }
 
 /**
- * Per-draw win history cannot come from onchain logs: the vault deliberately never emits
- * who won, and every depositor's claim transfers an encrypted amount. So the app derives
- * it from the wallet's own decrypted claimable balance — a rise between draws is a win.
- *
- * The journal persists to localStorage because the watermark has to survive reloads to
- * catch a prize that landed while the tab was closed. Detection happens during render
- * (adjusting state on changed input) and the effect only mirrors the result to storage.
+ * Personal wins are derived only from this wallet’s decrypted claimable balance.
+ * The vault never emits a winner address (FHE selection stays encrypted), so the
+ * draw feed alone cannot mark “YOU WON”. localStorage is only a watermark.
  */
 export function useWinJournal(input: {
   claimable: bigint | null;
@@ -95,10 +92,6 @@ export function useWinJournal(input: {
   return { wins: journal.wins, totalWon, celebrating, dismissCelebration };
 }
 
-/**
- * Folds a fresh claimable reading into the journal. Returns `null` when nothing moved so
- * the caller can skip the state update and avoid a render loop.
- */
 function advance(
   journal: Journal,
   claimable: bigint,
@@ -109,21 +102,26 @@ function advance(
     return null;
   }
 
-  // Claimable only ever rises inside draw() and is zeroed by claim(), so a positive
-  // balance on the very first reading is necessarily an unclaimed prize. Treating that
-  // reading as a mere baseline would hide a draw won before this browser first decrypted.
-  const firstReading = journal.lastDrawId === 0 && journal.wins.length === 0;
-  const previous = firstReading ? 0n : BigInt(journal.lastClaimable);
-  const won = claimable > previous && drawsCompleted > journal.lastDrawId;
+  const previous = BigInt(journal.lastClaimable);
+  // A win is only a rise in claimable after at least one new draw settled.
+  // First decrypt with a positive claimable also counts (prize landed while away).
+  const sawNewDraw = drawsCompleted > journal.lastDrawId;
+  const firstDecryptWithPrize =
+    journal.lastDrawId === 0 && journal.wins.length === 0 && claimable > 0n;
+  const won = claimable > previous && (sawNewDraw || firstDecryptWithPrize);
 
-  // A falling balance just means the wallet claimed, so the watermark rebases silently.
   if (!won) {
+    return { journal: { ...journal, lastClaimable, lastDrawId: drawsCompleted }, win: null };
+  }
+
+  const delta = claimable - previous;
+  if (delta <= 0n) {
     return { journal: { ...journal, lastClaimable, lastDrawId: drawsCompleted }, win: null };
   }
 
   const win: WinEntry = {
     drawId: drawsCompleted,
-    amount: (claimable - previous).toString(),
+    amount: delta.toString(),
     at: Math.floor(Date.now() / 1000),
   };
   return {
@@ -131,7 +129,7 @@ function advance(
       ...journal,
       lastClaimable,
       lastDrawId: drawsCompleted,
-      wins: [win, ...journal.wins].slice(0, 50),
+      wins: [win, ...journal.wins.filter((entry) => entry.drawId !== win.drawId)].slice(0, 50),
     },
     win,
   };
