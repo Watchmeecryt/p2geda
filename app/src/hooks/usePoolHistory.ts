@@ -6,7 +6,7 @@ import { SEPOLIA_CHAIN_ID } from '@/lib/chains';
 import { supabase, supabaseConfigured, type VaultEventRow } from '@/lib/supabase';
 
 /** Block the live USDC vault was deployed in; the RPC fallback starts here. */
-export const VAULT_DEPLOYMENT_BLOCK = 11_397_799n;
+export const VAULT_DEPLOYMENT_BLOCK = 11_397_960n;
 
 /** Public RPCs cap eth_getLogs spans, so the fallback scan is chunked. */
 const LOG_CHUNK = 45_000n;

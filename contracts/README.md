@@ -64,11 +64,11 @@ VITE_CONFIPOOL_VAULT_ADDRESS=0x...
 
 | Field | Value |
 |---|---|
-| Vault | [`0x1f7B0b56FcaeF3413F2A75bcCDD81E9C0de8b4ce`](https://sepolia.etherscan.io/address/0x1f7B0b56FcaeF3413F2A75bcCDD81E9C0de8b4ce) |
-| MockYield4626 | [`0xe827417d40A74f0eE566424079aE0eAe0eBA5728`](https://sepolia.etherscan.io/address/0xe827417d40A74f0eE566424079aE0eAe0eBA5728) |
+| Vault | [`0x6E20A73be3e2913b964a2e5a2E4DB46140E8824A`](https://sepolia.etherscan.io/address/0x6E20A73be3e2913b964a2e5a2E4DB46140E8824A) |
+| MockYield4626 | [`0x5303086C213e6B5703Db77ba87c030De019dA6BE`](https://sepolia.etherscan.io/address/0x5303086C213e6B5703Db77ba87c030De019dA6BE) |
 | Owner / admin | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
 | Deposit window / draw delay | 120s / 240s |
-| Deploy block | `11397799` |
+| Deploy block | `11397960` |
 
 Read live vault state (owner, tokens, draw count, reserve flags) without a wallet:
 
