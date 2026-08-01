@@ -15,17 +15,23 @@ export function NextDrawCard({ stats }: { stats: PoolStats }) {
   const interval = Number(stats.drawInterval || 1n);
   const windowSecs = Number(stats.depositWindowDuration || 1n);
   const totalCycle = windowSecs + interval;
-  const waitingForBus = stats.nextDrawAt === 0n;
+  const noSchedule = stats.nextDrawAt === 0n;
   const windowOpen = stats.depositsOpen && stats.depositWindowClosesAt > 0n;
-  const idleRedraw = !waitingForBus && stats.depositWindowClosesAt === 0n && stats.lastDrawAt > 0n;
-  const elapsed = waitingForBus
+  /** No open bus after a prior draw — keeper will not draw; only Admin may. */
+  const idleNoBus = !noSchedule && stats.depositWindowClosesAt === 0n && stats.lastDrawAt > 0n;
+  const busDrawPending = !noSchedule && !idleNoBus;
+  const elapsed = noSchedule || idleNoBus
     ? 0
-    : idleRedraw
-      ? Math.min(1, Math.max(0, (interval - remaining) / interval))
-      : Math.min(1, Math.max(0, (totalCycle - (windowOpen ? windowRemaining + interval : remaining)) / totalCycle));
+    : Math.min(
+        1,
+        Math.max(
+          0,
+          (totalCycle - (windowOpen ? windowRemaining + interval : remaining)) / totalCycle,
+        ),
+      );
   const live = stats.prizeConfigured && stats.reserveFunded;
-  const ready = !waitingForBus && remaining === 0 && live;
-  const stalled = !waitingForBus && remaining === 0 && !live;
+  const ready = busDrawPending && remaining === 0 && live;
+  const stalled = busDrawPending && remaining === 0 && !live;
 
   return (
     <div className="relative overflow-hidden rounded-xl border border-white/10 bg-ink p-6 shadow-[0_24px_60px_rgba(0,0,0,0.28)] sm:p-8">
@@ -42,22 +48,24 @@ export function NextDrawCard({ stats }: { stats: PoolStats }) {
         <div>
           <p className="label-pill text-white/50">Next draw</p>
           <p className="numeral mt-2.5 text-[clamp(2.25rem,6vw,3.25rem)] leading-none font-medium text-white">
-            {waitingForBus
-              ? 'Awaiting bus'
-              : ready
-                ? 'Ready'
-                : stalled
-                  ? 'On hold'
-                  : formatCountdown(remaining)}
+            {idleNoBus
+              ? 'Idle'
+              : noSchedule
+                ? 'Awaiting bus'
+                : ready
+                  ? 'Ready'
+                  : stalled
+                    ? 'On hold'
+                    : formatCountdown(remaining)}
           </p>
           <p className="mt-3 text-[13.5px] text-white/55">
-            {waitingForBus
-              ? `First deposit opens a ${formatCountdown(windowSecs)} bus; draw is due ${formatCountdown(interval)} after it closes.`
-              : windowOpen
-                ? `Deposit bus still open (${formatCountdown(windowRemaining)} left). Draw follows ${formatCountdown(interval)} after close.`
-                : idleRedraw
-                  ? `No new bus — yield can keep funding the reserve. Admin can redraw after ${formatCountdown(remaining)}; the keeper waits for the next deposit bus.`
-                  : `Deposit bus closed. Draw due in ${formatCountdown(remaining)}.`}
+            {idleNoBus
+              ? 'No new deposit bus. The keeper will not draw again until someone deposits. Admin can still trigger a draw manually.'
+              : noSchedule
+                ? `First deposit opens a ${formatCountdown(windowSecs)} bus; draw is due ${formatCountdown(interval)} after it closes.`
+                : windowOpen
+                  ? `Deposit bus still open (${formatCountdown(windowRemaining)} left). Draw follows ${formatCountdown(interval)} after close.`
+                  : `Deposit bus closed. Keeper draw due in ${formatCountdown(remaining)}.`}
           </p>
         </div>
 
@@ -84,7 +92,7 @@ export function NextDrawCard({ stats }: { stats: PoolStats }) {
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={Math.round(elapsed * 100)}
-          aria-label="Time until the next draw"
+          aria-label="Time until the next keeper draw"
         >
           <div
             className="h-full rounded-full bg-accent-bright transition-[width] duration-1000 ease-linear"
@@ -92,16 +100,14 @@ export function NextDrawCard({ stats }: { stats: PoolStats }) {
           />
         </div>
         <p className="mt-3 text-[12.5px] text-white/45">
-          {waitingForBus
-            ? 'No batch is open yet. Deposit to start the next bus.'
-            : ready
-              ? idleRedraw
-                ? 'Interval elapsed — only Admin can run another draw without a new deposit. The keeper stays idle until the next bus.'
-                : 'The batch timer has elapsed — the keeper can run the draw now.'
-              : stalled
-                ? 'The timer has elapsed, but the prize reserve still needs funding before a draw can run.'
-                : idleRedraw
-                  ? 'Depositors stay entered. Accrued yield can fund an admin redraw without a fresh deposit bus.'
+          {idleNoBus
+            ? 'Yield can still accrue into the prize reserve. A new deposit restarts the keeper draw cycle.'
+            : noSchedule
+              ? 'No batch is open yet. Deposit to start the next bus.'
+              : ready
+                ? 'The batch timer has elapsed — the keeper can run the draw now.'
+                : stalled
+                  ? 'The timer has elapsed, but the prize reserve still needs funding before a draw can run.'
                   : 'Every depositor in this batch is entered automatically. There is nothing to opt into.'}
         </p>
       </div>

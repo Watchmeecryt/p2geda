@@ -13,6 +13,8 @@ export function PoolStatsCard({ stats }: { stats: PoolStats }) {
   const live = stats.prizeConfigured && stats.reserveFunded;
   const windowIdle = stats.depositWindowClosesAt === 0n;
   const windowOpen = stats.depositsOpen && !windowIdle;
+  /** Idle after a draw: contract still exposes nextDrawAt for admin, but the keeper will not run it. */
+  const idleNoBus = windowIdle && stats.lastDrawAt > 0n;
 
   return (
     <Card>
@@ -50,6 +52,8 @@ export function PoolStatsCard({ stats }: { stats: PoolStats }) {
           value={
             stats.isLoading ? (
               <Skeleton className="h-5 w-16" />
+            ) : idleNoBus ? (
+              'After next deposit'
             ) : stats.nextDrawAt === 0n ? (
               'After next deposit bus'
             ) : (
@@ -77,8 +81,8 @@ export function PoolStatsCard({ stats }: { stats: PoolStats }) {
 
       <p className="mt-5 border-t border-hairline pt-4 text-[0.76rem] leading-relaxed text-hint">
         Each batch: {Number(stats.depositWindowDuration)}s deposit window, then the keeper parks
-        the aggregate in MockYield; draw is due {Number(stats.drawInterval)}s after the window
-        closes. Odds stay proportional to your encrypted deposit.
+        the aggregate in MockYield and draws {Number(stats.drawInterval)}s after the window closes.
+        With no new deposit bus, the keeper does not draw — only Admin can.
       </p>
     </Card>
   );

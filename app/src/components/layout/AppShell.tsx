@@ -243,12 +243,13 @@ function RailLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void
   );
 }
 
-/** Live countdown in the header so the next draw is never more than a glance away. */
+/** Header countdown only for a real keeper-scheduled bus draw — not idle admin windows. */
 function DrawPill({ compact = false }: { compact?: boolean }) {
-  const { nextDrawAt, drawsCompleted } = usePoolStats();
+  const { nextDrawAt, drawsCompleted, depositWindowClosesAt, lastDrawAt } = usePoolStats();
   const remaining = useCountdown(nextDrawAt);
+  const idleNoBus = depositWindowClosesAt === 0n && lastDrawAt > 0n;
 
-  if (!nextDrawAt) return null;
+  if (!nextDrawAt || idleNoBus) return null;
 
   const ready = remaining <= 0;
 
