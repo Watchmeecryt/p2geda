@@ -1,29 +1,95 @@
 # ConfiPool
 
-Confidential no-loss prize savings on [Zama](https://docs.zama.org/protocol/latest). Depositors put **encrypted USDC** into a shared prize vault. Yield funds the prize; draws pick a winner with on-chain FHE randomness; anyone can withdraw their **full principal** at any time.
+Confidential **no-loss prize savings** on the [Zama Protocol](https://docs.zama.org/protocol/latest) — a PoolTogether-style loop where deposits stay encrypted onchain (ERC-7984), draws use onchain FHE randomness, and principal is always withdrawable.
 
-**Live network:** Sepolia  
-**App:** Vite + React (`app/`) · **Contracts:** Hardhat / fhEVM (`contracts/`) · **Keeper + indexer:** Node (`indexer/`)
+| | |
+|--|--|
+| **Live app** | **[https://p-u-u-l-cw.netlify.app/](https://p-u-u-l-cw.netlify.app/)** |
+| **Network** | Ethereum Sepolia |
+| **GitHub** | [Watchmeecryt/p2geda](https://github.com/Watchmeecryt/p2geda) |
+| **Stack** | Vite + React (`app/`) · Hardhat / fhEVM (`contracts/`) · Node indexer + keeper (`indexer/`) |
 
----
-
-## What you are looking at
-
-ConfiPool is a PoolTogether-style loop with confidential balances:
-
-1. Mint / wrap official Zama **USDC Mock → cUSDCMock**
-2. Deposit into `ConfidentialPrizeVault` (amounts stay encrypted)
-3. Aggregate TVL is allocated into a clear **ERC-4626** yield venue
-4. Harvested yield is re-encrypted into the prize reserve
-5. `draw()` awards an encrypted prize; the winner claims; principal stays withdrawable
-
-On Sepolia the yield venue is **MockYield4626** (Morpho-shaped stand-in). On mainnet the same prize vault points at a Morpho USDC vault (e.g. Steakhouse Confidential Prime USDC) — same keeper path, drop the fake `accrue` drip.
-
-Depositors always deposit **one asset (cUSDC)**. Morpho “exposures” (cbBTC / WETH / idle USDC / wstETH) describe where that USDC would be allocated inside Morpho — not a second deposit token. The Yield page shows a Morpho-style stacked exposure preview for that story.
+Connect a wallet on Sepolia → Pool → faucet → wrap → deposit → decrypt your balance → wait for a draw (or Admin) → claim / withdraw.
 
 ---
 
-## Sepolia deployment
+## How the pool and draws work
+
+1. **Faucet / wrap** — Mint official Zama **USDC Mock**, wrap to **cUSDCMock** (ERC-7984).
+2. **Deposit** — `confidentialTransferAndCall` into `ConfidentialPrizeVault`. Your principal is an encrypted `euint64` balance.
+3. **Deposit bus** — First deposit opens a **120s** window. More deposits join the same bus. After close, the keeper parks aggregate TVL into the yield venue.
+4. **Draw** — **240s** after the window closes, the keeper (or Admin) runs `draw()`:
+   - Onchain `FHE.randEuint64()`
+   - Deposit-weighted selection over **encrypted** balances (no plaintext sizes)
+   - Winner’s encrypted claimable increases; everyone else gets an encrypted zero
+5. **Claim** — Winner (or any depositor — non-winners transfer encrypted zero) claims via confidential transfer; decrypt winnings with **EIP-712**.
+6. **Withdraw** — Exit with **full principal** anytime (no loss).
+
+**Keeper vs Admin**
+
+| Who | When they draw |
+|-----|----------------|
+| **Keeper** | Only after a **closed deposit bus** + draw interval |
+| **Admin** | Can also idle-redraw after `lastDrawAt + interval` with no new deposits (yield still funds the reserve) |
+
+Prize size at draw: owner **EIP-712 userDecrypt** of the encrypted prize reserve → set prize-per-draw to **`prizeShareBps`** (default **80%**) → `draw()`. The pot is **not** made publicly decryptable for that step.
+
+```text
+depositors ──cUSDC──► prize vault (encrypted balances)
+                         │
+              publicDecrypt(Σ TVL) → allocate (clear size for ERC-4626)
+                         ▼
+                   MockYield4626 (clear ERC-4626)
+                         │ accrue → harvestClear
+                         ▼
+         encrypt 100% → prize reserve → EIP-712 userDecrypt → 80% prize/draw
+                         ▼
+                      draw() → claim / withdraw
+```
+
+---
+
+## Confidentiality design
+
+### What stays encrypted
+
+| Surface | How |
+|---------|-----|
+| Per-user deposit / pool balance | ERC-7984 / `euint64`; EIP-712 **userDecrypt** only for that wallet |
+| Per-user claimable winnings | Same |
+| Prize reserve & prize-per-draw | Encrypted; owner can userDecrypt (Admin UI / keeper sizing) |
+| Winner identity | **Not emitted** onchain; FHE selection stays private |
+| Individual odds | Not published (would require plaintext balances) |
+
+### What can leak (documented)
+
+| Surface | Leak | Why |
+|---------|------|-----|
+| That a draw / deposit / withdraw / claim tx happened | Public logs + tx pattern | Needed for indexing & UX |
+| Aggregate TVL (Metrics) | After admin `requestPublicTvlReveal` (≥ **3** depositors by default) | Optional public stats |
+| Aggregate prizes paid (Metrics) | After admin `requestTotalPrizesPaidReveal` (≥ **5** draws by default) | Optional public stats |
+| Aggregate TVL for **allocate** | Keeper `requestTotalPrincipalReveal` + `publicDecrypt` | Must know a **clear** amount to deposit into ERC-4626 |
+| `harvestClear` surplus size | Clear ERC-20 transfer to owner | Demo harvest path; then re-encrypted into reserve |
+| Draw history “addresses” | Tx hashes, not winners | Indexer shows draw txs |
+
+Thresholds for Metrics publishes are admin-updatable (`setMinDepositsBeforePublicTvlReveal` / `setMinDrawsBeforePublicReveal`).
+
+---
+
+## Yield-source mock
+
+On Sepolia the prize vault’s yield venue is **`MockYield4626`** — an ERC-4626 with a configurable APR drip (`accrue`). It stands in for a Morpho-style USDC vault.
+
+| Mode | What happens |
+|------|----------------|
+| **A — Admin fund** | Admin encrypts cUSDC into the prize reserve and sets prize-per-draw (no yield needed). |
+| **B — Mock yield + keeper** | Allocate idle principal → `accrue` → `harvestClear` → wrap/encrypt **100%** into reserve → size 80% → draw. |
+
+**Mainnet plug-in:** same prize vault + keeper path; point `setYieldVault` at a Morpho USDC vault (e.g. Steakhouse), drop fake `accrue`, keep allocate / harvest / encrypt / draw. Depositors still deposit **one** asset (cUSDC); Morpho “exposures” on the Yield page are narrative only.
+
+---
+
+## Sepolia deployment (live)
 
 | What | Address |
 |------|---------|
@@ -33,79 +99,69 @@ Depositors always deposit **one asset (cUSDC)**. Morpho “exposures” (cbBTC /
 | cUSDCMock | [`0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639`](https://sepolia.etherscan.io/address/0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639) |
 | Admin / owner (demo) | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
 
-Deposit window **2 minutes** · draw **4 minutes** after window closes (~6 minutes end-to-end) · keeper draws only after a closed deposit bus · admin can idle-redraw every **4 minutes** after `lastDrawAt` without a new bus · prize share **80% of the full reserve** at draw time · deploy block **`11395134`**.  
-Full JSON: [`contracts/deployments/sepolia.json`](./contracts/deployments/sepolia.json).
+Deposit window **120s** · draw delay **240s** · deploy block **`11395134`**.  
+JSON: [`contracts/deployments/sepolia.json`](./contracts/deployments/sepolia.json).
 
-### Public metrics (aggregates only)
+### Demo admin wallet (reviewers)
 
-| Snapshot | Who publishes | Default threshold (admin-updatable) | What becomes public |
-|----------|---------------|--------------------------------------|---------------------|
-| **Vault TVL** (`requestPublicTvlReveal`) | Admin | ≥ **3** depositors (`setMinDepositsBeforePublicTvlReveal`) | Encrypted principal total — anyone can `publicDecrypt` |
-| **Prizes paid** (`requestTotalPrizesPaidReveal`) | Admin | ≥ **5** draws (`setMinDrawsBeforePublicReveal`) | Encrypted sum of claimed prizes |
-
-Thresholds are editable anytime on **Admin → Metrics reveal thresholds**.
-
-## Demo admin wallet (for reviewers)
-
-Import this **Sepolia-only** key into MetaMask / Rabby so you unlock Admin controls and can run the keeper. Do **not** send mainnet funds to it.
+Sepolia-only. Do **not** send mainnet funds.
 
 | | |
 |--|--|
 | Address | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
 | Private key | `0x35273d0406fb4ffc60439748ba596225a7b396d03ac5ae2d328b26fd7c944431` |
 
-This wallet **owns** the live Sepolia vault above. The USDC faucet is in the app (Pool → Use faucet).
+Owns the live vault. Use the same key as `OWNER_PRIVATE_KEY` for the keeper. In-app faucet: Pool → Use faucet.
 
 ---
 
-## Two ways to fund prizes
+## Deployment scripts
 
-ConfiPool ships **both** paths so reviewers can test either story.
+### Contracts (Hardhat)
 
-### Mode A — Admin funds the prize reserve (manual)
+```bash
+cd contracts
+cp .env.example .env   # PRIVATE_KEY, SEPOLIA_RPC_URL, token addresses, timings
+npm install
+npm run compile
+npm test
 
-Best when you want a short walkthrough without running the keeper.
+# Vault only (no yield)
+npm run deploy:sepolia
 
-1. Connect the **demo admin** wallet above.
-2. Pool → faucet → wrap → deposit (any wallet can be a depositor).
-3. Admin page → fund the encrypted prize reserve and set prize-per-draw.
-4. Wait for the draw interval (or trigger draw from Admin), then claim on Draws if you win.
+# MockYield4626 + prize vault + setYieldVault (current live path)
+npm run deploy:yield:sepolia
 
-### Mode B — Mock yield + keeper (Morpho path)
+# Read back live vault state
+npm run verify:sepolia
+```
 
-Best when you want the full allocate → accrue → harvest → encrypt → draw loop.
+Scripts:
 
-1. Depositors deposit cUSDC into the prize vault (encrypted).
-2. Run the keeper (see below). It:
-   - public-decrypts aggregate TVL → allocates into MockYield4626
-   - drips demo APR
-   - `harvestClear` → encrypts **100%** into the prize reserve (does **not** overwrite prize-per-draw)
-   - when the draw is due: **EIP-712 userDecrypt** of the reserve (same private path as Admin UI — not public reveal) → sets prize-per-draw to **80% of the full pot** → `draw()`
-3. Winner claims on the Draws page.
-4. After enough draws / depositors, Admin publishes **prizes paid** / **TVL** → Metrics page publicDecrypt.
+- [`contracts/scripts/deploy-sepolia.ts`](./contracts/scripts/deploy-sepolia.ts)
+- [`contracts/scripts/deploy-yield-sepolia.ts`](./contracts/scripts/deploy-yield-sepolia.ts)
+- [`contracts/scripts/verify-deployment.ts`](./contracts/scripts/verify-deployment.ts)
 
-Keeper sizing of prize-per-draw uses a private owner **userDecrypt** of the encrypted reserve each cycle (not `makePubliclyDecryptable`), so the clear prize amount moves as the pot grows (default **80%** of reserve via `prizeShareBps`) without publishing the pot size.
+### Frontend (Netlify / local)
+
+```bash
+cd app
+cp .env.example .env   # vault / yield / tokens / VITE_RELAYER_WEB_ORIGIN
+npm install
+npm run dev            # local
+npm run build          # production (Netlify uses netlify.toml → base app/)
+```
+
+Live site: **[https://p-u-u-l-cw.netlify.app/](https://p-u-u-l-cw.netlify.app/)** · config: [`netlify.toml`](./netlify.toml).
+
+### Indexer + keeper (Railway / local)
 
 ```bash
 cd indexer
-cp .env.example .env   # set RPC_URL + OWNER_PRIVATE_KEY (demo key above)
-npm run keeper         # continuous
-# or: npm run keeper:once
-```
-
-The Yield page admin tools (bootstrap allocate / accrue / harvest) are optional overrides. Prefer the keeper for Mode B.
-
-```text
-depositors ──cUSDC──► prize vault (encrypted balances)
-                         │
-              RelayerNode publicDecrypt(Σ) → allocate
-                         ▼
-                   MockYield4626 (clear ERC-4626)
-                         │ accrue → harvestClear
-                         ▼
-              encrypt 100% → prize reserve (prize/draw = 80%)
-                         ▼
-                      draw() → claim
+cp .env.example .env   # RPC_URL, VAULT_ADDRESS, DEPLOYMENT_BLOCK, OWNER_PRIVATE_KEY, Supabase…
+npm install
+npm start              # indexer + keeper together
+# or: npm run keeper / npm run keeper:once
 ```
 
 ---
@@ -113,22 +169,12 @@ depositors ──cUSDC──► prize vault (encrypted balances)
 ## Quick start (local app)
 
 ```bash
-# Frontend
-cd app
-cp .env.example .env
-npm install
-npm run dev
-
-# Contracts (optional — already deployed on Sepolia)
-cd ../contracts
-npm install
-npm test
+cd app && cp .env.example .env && npm install && npm run dev
 ```
 
-App env pointers (already filled in `.env.example` for the live Sepolia stack):
+Env pointers (filled for the live Sepolia stack in `.env.example`):
 
-- `VITE_CONFIPOOL_VAULT_ADDRESS`
-- `VITE_YIELD_VAULT_ADDRESS`
+- `VITE_CONFIPOOL_VAULT_ADDRESS` / `VITE_YIELD_VAULT_ADDRESS`
 - `VITE_USDC_MOCK_ADDRESS` / `VITE_CUSDC_MOCK_ADDRESS`
 - `VITE_RELAYER_WEB_ORIGIN` (browser RelayerWeb proxy)
 
@@ -143,25 +189,13 @@ App env pointers (already filled in `.env.example` for the live Sepolia stack):
 | [`indexer/`](./indexer) | Event indexer → Supabase + RelayerNode keeper |
 | [`supabase/`](./supabase) | SQL migrations for activity |
 
-Design notes and research live in [`APPROACH.md`](./APPROACH.md), [`PROCESS.md`](./PROCESS.md), [`06-FUTURE-ENCRYPTED-SHARE-WITHDRAW.md`](./06-FUTURE-ENCRYPTED-SHARE-WITHDRAW.md) (post-win Morpho-style shares), and the numbered `0*.md` briefs.
+Design notes: [`APPROACH.md`](./APPROACH.md), [`PROCESS.md`](./PROCESS.md), [`01-BOUNTY-BRIEF.md`](./01-BOUNTY-BRIEF.md), [`06-FUTURE-ENCRYPTED-SHARE-WITHDRAW.md`](./06-FUTURE-ENCRYPTED-SHARE-WITHDRAW.md).
 
 ---
 
 ## Mainnet cutover (later)
 
 1. Underlying → Circle USDC; confidential → mainnet `cUSDC`.
-2. `setYieldVault` → Morpho VaultV2 (same USDC asset). `WRAP_RATE` stays `1`.
+2. `setYieldVault` → Morpho VaultV2 (same USDC asset).
 3. In `indexer/src/relayer.ts`: `sepolia` → `mainnet` + API key auth.
 4. Drop MockYield `accrue`; keep allocate / harvestClear / encrypt / draw.
-
----
-
-## Privacy notes
-
-| Surface | Visibility |
-|---------|------------|
-| Per-user balances & claimables | Encrypted (user decrypt) |
-| Aggregate TVL (Metrics publish) | Encrypted until admin `requestPublicTvlReveal` (≥3 depositors); then publicDecrypt |
-| Aggregate TVL (keeper allocate) | Also made decryptable operationally to size MockYield deposits |
-| Aggregate prizes paid | Encrypted until admin reveal (≥5 draws); then publicDecrypt |
-| Who won | Not emitted onchain; only your decrypted claimable can mark “You won” |
