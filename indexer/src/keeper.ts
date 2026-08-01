@@ -25,10 +25,10 @@ import {
 /**
  * ConfiPool keeper — Node FHE (`node()` RelayerNode pool) + owner wallet.
  *
- * YIELD LEG (requires Node encrypt / publicDecrypt)
+ * YIELD LEG (requires Node encrypt / publicDecrypt for allocate sizing)
  *   1. Accrue fake APR into MockYield4626 (clear ERC-4626 — share price is public).
- *   2. If nothing allocated yet: public-decrypt aggregate principal → encrypt unwrap
- *      amount → requestAllocate → publicDecrypt burnt handle → finalizeAllocate.
+ *   2. Allocate idle principal into MockYield after a closed deposit bus, or while idle
+ *      if depositors still hold unallocated principal (e.g. after withdraw redeemed yield).
  *   3. harvestClear() → clear surplus to owner (leaked on purpose).
  *   4. Encrypt **100%** of harvested yield into `_prizeReserve`.
  *
@@ -199,8 +199,10 @@ async function tick(
 }
 
 /**
- * Custody-correct allocate: after the deposit window closes, decrypt aggregate TVL,
- * unwrap only the idle delta not already in MockYield, and finalize.
+ * Custody-correct allocate: park idle principal into MockYield.
+ * Runs after a deposit bus closes, and also while idle (window cleared) if
+ * depositors still hold principal that is not yet in the yield vault — e.g. after
+ * withdraws pulled all allocated liquidity back to pay exits.
  */
 async function maybeAllocateWithRelayer(
   config: KeeperConfig,
@@ -208,7 +210,7 @@ async function maybeAllocateWithRelayer(
   walletClient: Wallet,
   sdk: ZamaSDK,
 ) {
-  const [windowClosesAt, depositsStillOpen] = (await Promise.all([
+  const [windowClosesAt, depositsStillOpen, depositorCount] = (await Promise.all([
     publicClient.readContract({
       address: config.vaultAddress,
       abi: VAULT_ABI,
@@ -219,18 +221,30 @@ async function maybeAllocateWithRelayer(
       abi: VAULT_ABI,
       functionName: 'depositsOpen',
     }),
-  ])) as [bigint, boolean];
+    publicClient.readContract({
+      address: config.vaultAddress,
+      abi: VAULT_ABI,
+      functionName: 'depositorCount',
+    }),
+  ])) as [bigint, boolean, bigint];
 
-  if (windowClosesAt === 0n) {
-    log('yield.allocate: skip — no deposit batch open yet (waiting for first deposit)');
+  if (depositorCount === 0n) {
+    log('yield.allocate: skip — no depositors');
     return;
   }
-  if (depositsStillOpen) {
+
+  if (windowClosesAt === 0n) {
+    log(
+      'yield.allocate: no open deposit bus — checking idle principal still on the prize vault…',
+    );
+  } else if (depositsStillOpen) {
     const remaining = Number(windowClosesAt) - Math.floor(Date.now() / 1000);
     log(
       `yield.allocate: skip — deposit window still open (${remaining > 0 ? `${remaining}s left` : 'closing…'})`,
     );
     return;
+  } else {
+    log('yield.allocate: deposit bus closed — sizing idle principal…');
   }
 
   const allocated = (await publicClient.readContract({
@@ -245,7 +259,7 @@ async function maybeAllocateWithRelayer(
     functionName: 'confidentialToken',
   })) as `0x${string}`;
 
-  // After withdraw, `_totalPrincipal` is a *new* ciphertext handle (often 0) while
+  // After withdraw, `_totalPrincipal` is a *new* ciphertext handle while
   // `lastTotalPrincipalRevealHandle` can still point at the pre-withdraw value.
   const [currentPrincipalHandle, lastRevealHandle] = (await Promise.all([
     publicClient.readContract({
@@ -321,7 +335,7 @@ async function maybeAllocateWithRelayer(
   }
   const idleConf = principalConf - alreadyAllocatedConf;
   log(
-    `yield.allocate: batch closed — park idle ${idleConf} confidential units (principal ${principalConf}, already allocated ${alreadyAllocatedConf})`,
+    `yield.allocate: park idle ${idleConf} confidential units (principal ${principalConf}, already allocated ${alreadyAllocatedConf})`,
   );
 
   const encrypted = await encryptEuint64(sdk, {
