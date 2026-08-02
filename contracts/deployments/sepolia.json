@@ -2,23 +2,24 @@
   "chainId": 11155111,
   "network": "sepolia",
   "deployer": "0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9",
-  "vault": "0x6E20A73be3e2913b964a2e5a2E4DB46140E8824A",
-  "yieldVault": "0x5303086C213e6B5703Db77ba87c030De019dA6BE",
+  "vault": "0xdcD95B91EEadF241B7ce8c899272E164bFc2A4B2",
+  "yieldVault": "0x7f3fFa3d8F80477134b2D9a802c85BAbf50a0187",
   "underlyingToken": "0x9b5Cd13b8eFbB58Dc25A05CF411D8056058aDFfF",
   "confidentialToken": "0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639",
   "depositWindow": 120,
-  "drawInterval": 240,
+  "drawInterval": 60,
   "yieldAprBps": 8000,
-  "deploymentBlock": 11397960,
-  "deployTx": "0xe71223f400770b55e85b4566b2da6d05f69e13f3e879f223750a2f3c30c76ee0",
-  "deployedAt": "2026-08-01T17:51:34.678Z",
+  "deploymentBlock": 11404729,
+  "deployTx": "0x8dbc9190e1c5804875fb5834a44413da0686321d3a4b07c069409111eb6bb0da",
+  "deployedAt": "2026-08-02T17:03:01.000Z",
   "features": [
     "updatable minDrawsBeforePublicReveal / minDepositsBeforePublicTvlReveal",
     "requestPublicTvlReveal",
     "permissionless bus draw() after window close + drawInterval",
-    "idle redraw: lastDrawAt + drawInterval without new deposit bus (owner-only)"
+    "idle redraw: lastDrawAt + drawInterval without new deposit bus (owner-only)",
+    "drawInterval 60s for faster reviewer demos"
   ],
   "note": "Batch deposit window + delayed draw. Update VITE_CONFIPOOL_VAULT_ADDRESS and indexer VAULT_ADDRESS / DEPLOYMENT_BLOCK.",
-  "previousVault": "0x1f7B0b56FcaeF3413F2A75bcCDD81E9C0de8b4ce",
-  "previousYieldVault": "0xe827417d40A74f0eE566424079aE0eAe0eBA5728"
+  "previousVault": "0x6E20A73be3e2913b964a2e5a2E4DB46140E8824A",
+  "previousYieldVault": "0x5303086C213e6B5703Db77ba87c030De019dA6BE"
 }

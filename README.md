@@ -17,7 +17,7 @@ Connect a wallet on Sepolia → Pool → faucet → wrap → deposit → decrypt
 1. **Faucet / wrap** — Mint official Zama **USDC Mock**, wrap to **cUSDCMock** (ERC-7984).
 2. **Deposit** — `confidentialTransferAndCall` into `ConfidentialPrizeVault`. Your principal is an encrypted `euint64` balance.
 3. **Deposit bus** — First deposit opens a **120s** window. More deposits join the same bus. After close, the keeper parks aggregate TVL into the yield venue.
-4. **Draw** — **240s** after the window closes (and yield has been harvested into the reserve), **anyone** may call `draw()` — the Draws page **Draw winner** button, or the keeper:
+4. **Draw** — **60s** after the window closes (and yield has been harvested into the reserve), **anyone** may call `draw()` — the Draws page **Draw winner** button, or the keeper:
    - Onchain `FHE.randEuint64()`
    - Deposit-weighted selection over **encrypted** balances (no plaintext sizes)
    - Winner’s encrypted claimable increases; everyone else gets an encrypted zero
@@ -100,13 +100,13 @@ On Sepolia the prize vault’s yield venue is **`MockYield4626`** — an ERC-462
 
 | What | Address |
 |------|---------|
-| Prize vault | [`0x6E20A73be3e2913b964a2e5a2E4DB46140E8824A`](https://sepolia.etherscan.io/address/0x6E20A73be3e2913b964a2e5a2E4DB46140E8824A) |
-| MockYield4626 | [`0x5303086C213e6B5703Db77ba87c030De019dA6BE`](https://sepolia.etherscan.io/address/0x5303086C213e6B5703Db77ba87c030De019dA6BE) |
+| Prize vault | [`0xdcD95B91EEadF241B7ce8c899272E164bFc2A4B2`](https://sepolia.etherscan.io/address/0xdcD95B91EEadF241B7ce8c899272E164bFc2A4B2) |
+| MockYield4626 | [`0x7f3fFa3d8F80477134b2D9a802c85BAbf50a0187`](https://sepolia.etherscan.io/address/0x7f3fFa3d8F80477134b2D9a802c85BAbf50a0187) |
 | USDC Mock (faucet) | [`0x9b5Cd13b8eFbB58Dc25A05CF411D8056058aDFfF`](https://sepolia.etherscan.io/address/0x9b5Cd13b8eFbB58Dc25A05CF411D8056058aDFfF) |
 | cUSDCMock | [`0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639`](https://sepolia.etherscan.io/address/0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639) |
 | Admin / owner (demo) | `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9` |
 
-Deposit window **120s** · draw delay **240s** · deploy block **`11397960`**.  
+Deposit window **120s** · draw delay **60s** · deploy block **`11404729`**.  
 JSON: [`contracts/deployments/sepolia.json`](./contracts/deployments/sepolia.json).
 
 Bus draws are **permissionless** — any wallet can click **Draw winner** on Draws when the countdown is due. No demo private key is published in this repo. Vault owner address (for Admin / idle redraws): `0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9`. In-app faucet: Pool → Use faucet.

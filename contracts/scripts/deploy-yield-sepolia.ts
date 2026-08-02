@@ -22,7 +22,7 @@ async function main() {
   const underlyingToken = process.env.USDC_MOCK_ADDRESS ?? DEFAULT_USDC_MOCK;
   const confidentialToken = process.env.CUSDC_MOCK_ADDRESS ?? DEFAULT_CUSDC_MOCK;
   const depositWindow = Number(process.env.DEPOSIT_WINDOW_SECONDS ?? "120");
-  const drawInterval = Number(process.env.DRAW_INTERVAL_SECONDS ?? "180");
+  const drawInterval = Number(process.env.DRAW_INTERVAL_SECONDS ?? "60");
   const aprBps = Number(process.env.YIELD_APR_BPS ?? "8000");
 
   console.log(`Deploying yield stack from ${deployer.address}`);
