@@ -30,7 +30,26 @@ export function PoolStatsCard({
   const busDrawPending = !idleNoBus && stats.nextDrawAt > 0n;
   const ready = busDrawPending && drawRemaining === 0 && live;
   const stalled = busDrawPending && drawRemaining === 0 && !live;
-  const showPublicDraw = Boolean(onDraw) && busDrawPending && (live || stalled);
+
+  const drawLabel = ready
+    ? 'Draw winner'
+    : stalled
+      ? 'Prize not funded'
+      : busDrawPending
+        ? `Draw in ${formatCountdown(drawRemaining)}`
+        : idleNoBus
+          ? 'Draw after next deposit'
+          : 'Draw after deposit bus';
+
+  const drawHint = ready
+    ? 'Anyone can run this — it picks a winner onchain over encrypted balances. On mainnet a keeper usually handles it.'
+    : stalled
+      ? 'The timer has elapsed, but the prize reserve still needs funding before a draw can run.'
+      : busDrawPending
+        ? 'This stays inactive until the countdown hits zero. Then anyone can click it to pick a winner.'
+        : idleNoBus
+          ? 'No open deposit bus. A new deposit restarts the public draw cycle; idle redraws stay admin-only.'
+          : 'Deposit to open a bus. When the window closes and the draw delay elapses, this button unlocks for anyone.';
 
   return (
     <Card>
@@ -97,7 +116,7 @@ export function PoolStatsCard({
         />
       </dl>
 
-      {showPublicDraw ? (
+      {onDraw ? (
         <div className="mt-5 border-t border-hairline pt-4">
           <Button
             variant="accent"
@@ -109,15 +128,9 @@ export function PoolStatsCard({
             onClick={onDraw}
           >
             <HugeiconsIcon icon={DiceIcon} size={22} aria-hidden />
-            {ready ? 'Draw winner' : stalled ? 'Prize not funded' : `Draw in ${formatCountdown(drawRemaining)}`}
+            {drawLabel}
           </Button>
-          <p className="mt-3 text-center text-[0.76rem] leading-relaxed text-hint">
-            {stalled
-              ? 'The timer has elapsed, but the prize reserve still needs funding before a draw can run.'
-              : ready
-                ? 'Anyone can run this — it picks a winner onchain over encrypted balances. On mainnet a keeper usually handles it.'
-                : 'Button unlocks when the countdown hits zero. Bus draws are permissionless on testnet.'}
-          </p>
+          <p className="mt-3 text-center text-[0.76rem] leading-relaxed text-hint">{drawHint}</p>
         </div>
       ) : (
         <p className="mt-5 border-t border-hairline pt-4 text-[0.76rem] leading-relaxed text-hint">
