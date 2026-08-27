@@ -201,7 +201,7 @@ Env pointers (filled for the live Sepolia stack in `.env.example`):
 | [`indexer/`](./indexer) | Event indexer → Supabase + RelayerNode keeper |
 | [`supabase/`](./supabase) | SQL migrations for activity |
 
-Design notes: [`APPROACH.md`](./APPROACH.md), [`PROCESS.md`](./PROCESS.md), [`01-BOUNTY-BRIEF.md`](./01-BOUNTY-BRIEF.md), [`06-FUTURE-ENCRYPTED-SHARE-WITHDRAW.md`](./06-FUTURE-ENCRYPTED-SHARE-WITHDRAW.md).
+Design notes: [`APPROACH.md`](./APPROACH.md), [`PROCESS.md`](./PROCESS.md), [`01-BOUNTY-BRIEF.md`](./01-BOUNTY-BRIEF.md).
 
 ---
 
