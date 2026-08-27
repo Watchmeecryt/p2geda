@@ -1,5 +1,5 @@
 import { BaseError, ContractFunctionRevertedError, formatUnits } from 'viem';
-import { CONFIDENTIAL_DECIMALS } from './contracts';
+import { CONFIDENTIAL_DECIMALS, MAX_DEPOSITORS } from './contracts';
 import { formatTimestamp } from './format';
 
 /** Maps the vault's custom errors onto language a depositor can act on. */
@@ -8,7 +8,7 @@ function describeVaultError(name: string, args: readonly unknown[]): string {
     case 'OnlyDepositor':
       return 'Only accounts with a deposit can do this. Deposit into the pool first.';
     case 'DepositorLimitReached':
-      return 'This pool is full for the testnet run (32 depositors max).';
+      return `This pool is full for the testnet run (${MAX_DEPOSITORS} depositors max).`;
     case 'PrizeNotConfigured':
       return 'The admin has not set a prize per draw yet.';
     case 'PrizeReserveNotFunded':

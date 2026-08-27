@@ -45,6 +45,9 @@ export const WRAP_RATE = 10n ** BigInt(UNDERLYING_DECIMALS - CONFIDENTIAL_DECIMA
 export const UNDERLYING_SYMBOL = 'USDC';
 export const CONFIDENTIAL_SYMBOL = 'cUSDC';
 
+/** Maximum depositors per deposit bus (matches vault source). */
+export const MAX_DEPOSITORS = 256n;
+
 /** An uninitialized euint64 handle reads back as 32 zero bytes. */
 export const UNINITIALIZED_HANDLE =
   '0x0000000000000000000000000000000000000000000000000000000000000000' as const;
