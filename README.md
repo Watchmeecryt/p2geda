@@ -79,7 +79,32 @@ depositors ──cUSDC──► prize vault (encrypted balances)
 
 Thresholds for Metrics publishes are admin-updatable (`setMinDepositsBeforePublicTvlReveal` / `setMinDrawsBeforePublicReveal`).
 
-**Winner selection (fairness):** onchain `FHE.randEuint64` → ticket scaled by encrypted `_totalPrincipal` → cumulative walk over encrypted `_balances` → `FHE.select` credits exactly one depositor’s claimable. No offchain RNG; no plaintext balances in the pick.
+### Winner selection (meets the FHE draw requirement)
+
+Winners are selected **onchain** using FHE randomness, **weighted by deposit size**, over **encrypted balances**:
+
+1. `FHE.randEuint64()` produces an encrypted random word (no offchain RNG, no admin seed).
+2. That word is scaled into a ticket against encrypted `_totalPrincipal`.
+3. The contract walks depositors, adding each encrypted `_balances[account]` into a cumulative total.
+4. The first range that contains the ticket receives the prize via `FHE.select`; everyone else is credited an encrypted zero.
+
+Balances are never decrypted to pick a winner. Individual odds are not published. The depositor list is capped at **32** so this sequential FHE loop stays within Sepolia’s HCU / gas budget — sizes stay encrypted; only participation is public.
+
+---
+
+## Future version (roadmap)
+
+This Sepolia build is intentionally scoped so judges can run the full cycle with a clear HCU-safe draw. A later version can harden scale and fairness without changing the product promise (no-loss principal, encrypted balances, onchain FHE draws):
+
+| Improvement | Why |
+|-------------|-----|
+| **Time-weighted balances (TWAB)** | Weight odds by how long principal stayed in over the bus window, not only the encrypted balance at draw time — closer to classic prize-savings and harder to game with last-second deposits. |
+| **Scale past 32 depositors** | Replace the single-tx cumulative walk with batched weight lock / settle (or an oblivious per-entrant “did I win?” check against one encrypted `FHE.rand` ticket) so pool size is not bound by sequential HCU depth. |
+| **Encrypted share withdraw** | Redeem only the user’s clear slice from the yield venue instead of pulling all allocated liquidity for one exit — see [`06-FUTURE-ENCRYPTED-SHARE-WITHDRAW.md`](./06-FUTURE-ENCRYPTED-SHARE-WITHDRAW.md). |
+| **Real yield venue** | Keep the same allocate → harvest → encrypt → draw path; point `setYieldVault` at Morpho (or similar) and drop the mock APR drip. |
+| **Keeper-first mainnet draws** | Keep permissionless bus `draw()` for liveness; default production cadence to an automated keeper so users never wait on a manual click. |
+
+None of the above is required for the current demo path: deposit → encrypted hold → FHE-weighted draw → claim → withdraw already works on Sepolia.
 
 ---
 
