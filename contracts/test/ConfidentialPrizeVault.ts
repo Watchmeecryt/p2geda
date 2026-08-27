@@ -39,9 +39,13 @@ async function decrypt64(
 async function waitUntilDrawDue(vault: ConfidentialPrizeVault) {
   const closesAt = await vault.depositWindowClosesAt();
   expect(closesAt).to.not.equal(0n);
-  const dueAt = closesAt + BigInt(DRAW_INTERVAL);
+  const dueAt = closesAt + BigInt(DRAW_INTERVAL) + 1n;
   const now = BigInt(await time.latest());
-  if (dueAt > now) await time.increaseTo(dueAt);
+  if (dueAt > now) {
+    await time.increaseTo(dueAt);
+  } else {
+    await time.increase(1);
+  }
 }
 
 async function deployFixture() {
@@ -325,6 +329,7 @@ describe("ConfidentialPrizeVault", function () {
       await decrypt64(await vault.confidentialPrizeReserve(), vaultAddress, owner),
     ).to.equal(300n * UNIT);
 
+    await waitUntilDrawDue(vault);
     await (await vault.connect(owner).draw()).wait();
 
     // The draw rewrites the reserve handle; the owner must still be able to read it.
