@@ -15,36 +15,43 @@ Connect a wallet on Sepolia → Pool → faucet → wrap → deposit → decrypt
 ## How the pool and draws work
 
 1. **Faucet / wrap** — Mint official Zama **USDC Mock**, wrap to **cUSDCMock** (ERC-7984).
-2. **Deposit** — `confidentialTransferAndCall` into `ConfidentialPrizeVault`. Your principal is an encrypted `euint64` balance.
-3. **Deposit bus** — First deposit opens a **120s** window. More deposits join the same bus. After close, the keeper parks aggregate TVL into the yield venue.
-4. **Draw** — **60s** after the window closes (and yield has been harvested into the reserve), **anyone** may call `draw()` — the Draws page **Draw winner** button, or the keeper:
+2. **Deposit** — `confidentialTransferAndCall` into `ConfidentialPrizeVault`. Your principal is an encrypted `euint64` balance (your private share of the pool). The vault records when you joined the current deposit bus for time-in-bus weighting.
+3. **Deposit bus** — First deposit opens a **120s** window. More deposits join the same bus. After close, the keeper public-decrypts **aggregate** TVL only, unwraps that clear total, and parks it in the yield venue (`MockYield4626`). Individual sizes stay encrypted.
+4. **Draw** — **60s** after the window closes (and yield has been harvested into the reserve), **anyone** may call `draw()` — the Pool / Draws **Draw winner** button, or the keeper:
    - Onchain `FHE.randEuint64()`
-   - Deposit-weighted selection over **encrypted** balances (no plaintext sizes)
+   - Selection weighted by **time-in-bus × encrypted balance** (late joiners get less weight)
+   - Compact buses finish in one tx; larger buses use `EncryptedSlotDraw` + batched `settle`
    - Winner’s encrypted claimable increases; everyone else gets an encrypted zero
-5. **Claim** — Winner (or any depositor — non-winners transfer encrypted zero) claims via confidential transfer; decrypt winnings with **EIP-712**.
-6. **Withdraw** — Exit with **full principal** anytime (no loss).
+5. **Claim** — Winner (or any depositor — non-winners transfer encrypted zero) claims via confidential transfer; decrypt winnings with **EIP-712**. Claim pays from the encrypted prize reserve — it does **not** redeem MockYield principal.
+6. **Withdraw principal** — Exit with **full principal** anytime (no loss). How it pays depends on whether capital is still parked in yield:
+   - **Idle** (nothing allocated in MockYield): one-step `withdraw` — confidential transfer of your encrypted amount back as cUSDC.
+   - **Allocated** (batch already invested): two-step exit so only **your** slice leaves the yield venue:
+     1. `withdraw` — stage the encrypted exit amount (made publicly decryptable for sizing only).
+     2. `finalizeWithdraw(clearAssets)` — redeem **that clear amount** from MockYield, wrap to cUSDC, pay you, reduce your encrypted balance. Other depositors’ capital stays invested.
 
 **Who can draw**
 
 | Who | When |
 |-----|------|
-| **Anyone** (default) | After a **closed deposit bus** + draw interval — click **Draw winner** on Draws |
+| **Anyone** (default) | After a **closed deposit bus** + draw interval — click **Draw winner** on Pool / Draws |
 | **Keeper** | Same bus path; on mainnet this is the usual automation so nobody clicks |
 | **Admin** | Idle redraw after `lastDrawAt + interval` with **no** new deposit bus (owner-only) |
 
 Prize size at draw: owner **EIP-712 userDecrypt** of the encrypted prize reserve → set prize-per-draw to **`prizeShareBps`** (default **80%**) → `draw()`. The pot is **not** made publicly decryptable for that step.
 
 ```text
-depositors ──cUSDC──► prize vault (encrypted balances)
+depositors ──cUSDC──► prize vault (encrypted balances / private shares)
                          │
               publicDecrypt(Σ TVL) → allocate (clear size for ERC-4626)
                          ▼
-                   MockYield4626 (clear ERC-4626)
+                   MockYield4626 (clear ERC-4626)  ← other users stay invested on your exit
                          │ accrue → harvestClear
                          ▼
          encrypt 100% → prize reserve → EIP-712 userDecrypt → 80% prize/draw
                          ▼
-                      draw() → claim / withdraw
+                      draw() → claim
+                         │
+         withdraw / finalizeWithdraw → your principal only
 ```
 
 ---
@@ -90,10 +97,14 @@ Winners are selected **onchain** using FHE randomness, **weighted by time-in-bus
 
 Balances are never decrypted to pick a winner. Individual odds are not published. The registry allows up to **256** depositors; only participation is public.
 
-### Principal withdraw (allocated capital)
+### Principal withdraw (full path)
 
-- If nothing is parked in MockYield: one-step confidential transfer (unchanged UX).
-- If capital is allocated: `withdraw` stages an encrypted amount → publicDecrypt the size → `finalizeWithdraw` redeems **only that clear slice** from the yield venue, wraps, and pays the user. Other depositors’ capital can remain invested.
+| State | Steps | What leaves MockYield |
+|-------|--------|------------------------|
+| Idle (unallocated) | `withdraw` only | Nothing — paid from cUSDC already on the vault |
+| Allocated | `withdraw` → publicDecrypt exit size → `finalizeWithdraw` | **Only** the exiting user’s clear assets |
+
+No-loss guarantee: principal remains withdrawable in both states. The allocated path exists so one exit does not empty the whole yield position for everyone else. The clear exit size is an intentional, documented leak for ERC-4626 redeem sizing; balances and winner identity stay encrypted.
 
 ---
 
