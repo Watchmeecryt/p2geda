@@ -4,6 +4,8 @@
 export const TOKEN_ICONS = {
   usdc: '/icons/usdc.svg',
   morpho: '/icons/morpho.jpg',
+  steakhouse: '/icons/steakhouse.png',
+  zama: '/icons/zama.png',
   weth: '/icons/weth.svg',
   cbbtc: '/icons/cbbtc.svg',
   wsteth: '/icons/wsteth.svg',

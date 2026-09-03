@@ -92,20 +92,53 @@ export async function publicDecryptHandle(
   handle: Hex,
   opts?: { attempts?: number; delayMs?: number },
 ): Promise<PublicDecryptResult> {
+  const multi = await publicDecryptHandles(sdk, [handle], opts);
+  return {
+    cleartext: multi.values[0]!,
+    decryptionProof: multi.decryptionProof,
+  };
+}
+
+export type PublicDecryptManyResult = {
+  /** Clear values in the same order as `handles`. */
+  values: bigint[];
+  /** ABI-encoded cleartexts for `FHE.checkSignatures` / `revealDraw`. */
+  cleartexts: Hex;
+  decryptionProof: Hex;
+};
+
+/**
+ * Public-decrypt several handles in one KMS call (needed for revealDraw: R + totalWeight).
+ */
+export async function publicDecryptHandles(
+  sdk: ZamaSDK,
+  handles: Hex[],
+  opts?: { attempts?: number; delayMs?: number },
+): Promise<PublicDecryptManyResult> {
+  if (handles.length === 0) throw new Error('publicDecryptHandles requires at least one handle');
   const attempts = opts?.attempts ?? 10;
   const delayMs = opts?.delayMs ?? 2_500;
   let lastError: unknown;
 
   for (let i = 0; i < attempts; i++) {
     try {
-      const result = await sdk.decryption.decryptPublicValues([handle]);
+      const result = await sdk.decryption.decryptPublicValues(handles);
       const clearValues = result.clearValues as Record<string, bigint | number | string>;
-      const key = Object.keys(clearValues).find((k) => k.toLowerCase() === handle.toLowerCase());
-      if (!key) throw new Error(`decryptPublicValues did not return cleartext for ${handle}`);
-      const raw = clearValues[key];
-      const cleartext = typeof raw === 'bigint' ? raw : BigInt(raw as string | number);
+      const values = handles.map((handle) => {
+        const key = Object.keys(clearValues).find((k) => k.toLowerCase() === handle.toLowerCase());
+        if (!key) throw new Error(`decryptPublicValues did not return cleartext for ${handle}`);
+        const raw = clearValues[key];
+        return typeof raw === 'bigint' ? raw : BigInt(raw as string | number);
+      });
+
+      const encoded = result.abiEncodedClearValues as Hex | undefined;
+      if (!encoded) {
+        throw new Error('decryptPublicValues did not return abiEncodedClearValues');
+      }
+
       return {
-        cleartext,
+        values,
+        cleartexts: encoded,
         decryptionProof: result.decryptionProof as Hex,
       };
     } catch (error) {

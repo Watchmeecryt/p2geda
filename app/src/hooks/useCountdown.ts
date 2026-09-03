@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { DRAW_STATUS } from '@/lib/contracts';
+import type { PoolStats } from '@/hooks/usePoolData';
 
 /**
  * Seconds remaining until `targetSeconds`. The value is derived at render time and the
@@ -15,6 +17,18 @@ export function useCountdown(targetSeconds: bigint | number | undefined): number
   }, [target]);
 
   return secondsUntil(target);
+}
+
+/**
+ * Countdown toward the next openDraw. While a draw is still open (awaiting reveal),
+ * the contract returns uint40.max — not a real unix time — so we surface that as blocked.
+ */
+export function useNextOpenRemaining(
+  stats: Pick<PoolStats, 'nextOpenableAt' | 'currentDrawStatus'>,
+): { remaining: number; awaitingReveal: boolean } {
+  const awaitingReveal = stats.currentDrawStatus === DRAW_STATUS.Open;
+  const remaining = useCountdown(awaitingReveal ? undefined : stats.nextOpenableAt);
+  return { remaining, awaitingReveal };
 }
 
 function secondsUntil(target: number): number {

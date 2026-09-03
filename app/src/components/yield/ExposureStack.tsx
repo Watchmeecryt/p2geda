@@ -101,7 +101,8 @@ export function ExposureStack({ allocatedUnderlying, className }: Props) {
             onMouseLeave={hideSoon}
           >
             <p className="px-2 pt-1 pb-2 text-[0.68rem] leading-snug text-white/55">
-              Demo Morpho shape. Sepolia capital is 100% in MockYield4626.
+              Mainnet Steakhouse / Morpho shape. Sepolia capital joins the real Zama batch — staging
+              yield is idle.
             </p>
             <ul className="grid gap-0.5">
               {rows.map((row) => (

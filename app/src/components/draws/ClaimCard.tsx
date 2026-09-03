@@ -26,7 +26,8 @@ export function ClaimCard({ view, claimable, isDepositor, busy, onClaim }: Props
         <div className="min-w-0">
           <h3 className="font-bold">Your winnings</h3>
           <p className="mt-1 text-[0.84rem] leading-relaxed text-muted">
-            Prizes accrue to an encrypted balance. Reveal it with your permit, then claim.
+            The keeper accrues prizes after each reveal. Reveal your permit to see unclaimed
+            winnings, then claim.
           </p>
         </div>
       </div>

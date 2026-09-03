@@ -5,10 +5,8 @@ import type { Hex } from 'viem';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   Analytics01Icon,
-  ChartIncreaseIcon,
   DiceIcon,
   MoneyBag02Icon,
-  SafeIcon,
   Settings02Icon,
 } from '@hugeicons/core-free-icons';
 import type { IconSvgElement } from '@hugeicons/react';
@@ -22,16 +20,15 @@ import { ConfidentialAmount } from '@/components/ConfidentialAmount';
 import { PrivateViewToggle } from '@/components/PrivateViewToggle';
 import { AmountModal } from '@/components/admin/AmountModal';
 import { RevealModal } from '@/components/admin/RevealModal';
-import { RevealThresholdsCard } from '@/components/admin/RevealThresholdsCard';
 import { useConfiPoolActions } from '@/hooks/useConfiPoolActions';
-import { useCountdown } from '@/hooks/useCountdown';
+import { useNextOpenRemaining } from '@/hooks/useCountdown';
 import { useIsAdmin, usePoolStats } from '@/hooks/usePoolData';
 import { usePrivateView } from '@/hooks/usePrivateView';
-import { UNINITIALIZED_HANDLE, VAULT_ABI, VAULT_ADDRESS } from '@/lib/contracts';
+import { DRAW_STATUS, UNINITIALIZED_HANDLE, VAULT_ABI, VAULT_ADDRESS } from '@/lib/contracts';
 import { explorerAddressUrl } from '@/lib/chains';
-import { formatCountdown, shortenAddress } from '@/lib/format';
+import { formatConfidential, formatCountdown, shortenAddress } from '@/lib/format';
 
-type Dialog = 'prize' | 'reserve' | 'draw' | 'reveal' | null;
+type Dialog = 'reserve' | 'openDraw' | 'reveal' | null;
 
 export function AdminPage() {
   const { isConnected } = useAccount();
@@ -48,12 +45,6 @@ export function AdminPage() {
         chainId: sepolia.id,
         functionName: 'confidentialPrizeReserve',
       },
-      {
-        address: VAULT_ADDRESS,
-        abi: VAULT_ABI,
-        chainId: sepolia.id,
-        functionName: 'confidentialPrizePerDraw',
-      },
     ],
     query: { enabled: isAdmin, refetchInterval: 12_000 },
   });
@@ -66,21 +57,18 @@ export function AdminPage() {
   };
 
   const reserveHandle = liveHandle(0);
-  const prizeHandle = liveHandle(1);
 
   const view = usePrivateView({
-    vaultHandles: [reserveHandle, prizeHandle],
+    vaultHandles: [reserveHandle],
     tokenHandles: [],
   });
 
-  const remaining = useCountdown(stats.nextDrawAt);
-  const drawReady =
-    stats.nextDrawAt > 0n &&
+  const { remaining, awaitingReveal } = useNextOpenRemaining(stats);
+  const openReady =
+    stats.depositorCount > 0n &&
     remaining === 0 &&
-    !stats.depositsOpen &&
-    stats.prizeConfigured &&
-    stats.reserveFunded &&
-    stats.depositorCount > 0n;
+    stats.tiersConfigured &&
+    !awaitingReveal;
 
   const refresh = useCallback(() => {
     stats.refetch();
@@ -94,7 +82,7 @@ export function AdminPage() {
         <div className="mt-8">
           <ConnectPrompt
             title="Connect the admin wallet"
-            description="Prize configuration, reserve funding, draws, and the public reveal are restricted to the vault owner."
+            description="Prize reserve funding and public reveal controls are restricted to the vault owner."
           />
         </div>
       </div>
@@ -117,8 +105,7 @@ export function AdminPage() {
             >
               {stats.owner ? shortenAddress(stats.owner) : 'the owner'}
             </a>{' '}
-            can fund the reserve, set the prize, or trigger a draw. Everything a depositor needs
-            lives on the Pool and Draws pages.
+            can fund the reserve. Depositors use Pool and Draws.
           </p>
         </Card>
       </div>
@@ -130,7 +117,7 @@ export function AdminPage() {
       <PageHeader
         kicker="Admin"
         title="Pool operations"
-        description="Fund the prize reserve (or harvest mock yield into it), set the prize per draw, and trigger draws. The keeper automates draw + accrue/harvest with the same owner key."
+        description="For Sepolia demos, fund the encrypted prize reserve yourself (bounty allows an admin-funded yield source). The keeper opens/reveals/accrues in the background."
         action={<PrivateViewToggle view={view} size="md" />}
       />
 
@@ -149,26 +136,20 @@ export function AdminPage() {
               <p className="mt-1 text-[0.78rem] text-hint">Readable by you only</p>
             </div>
             <div>
-              <p className="label-pill">Prize per draw</p>
-              <div className="mt-2">
-                <ConfidentialAmount
-                  value={view.vaultValue(prizeHandle)}
-                  decrypting={view.decrypting}
-                  symbol={false}
-                />
-              </div>
-              <p className="mt-1 text-[0.78rem] text-hint">
-                {stats.prizeConfigured ? 'Configured' : 'Not set yet'}
+              <p className="label-pill">Tier prizes</p>
+              <p className="numeral mt-2 text-[1.05rem] font-bold leading-snug">
+                {formatConfidential(stats.apexPrize)} / {formatConfidential(stats.pulsePrize)} /{' '}
+                {formatConfidential(stats.ripplePrize)}
               </p>
+              <p className="mt-1 text-[0.78rem] text-hint">Apex / Pulse / Ripple (set at deploy)</p>
             </div>
             <div>
-              <p className="label-pill">Next draw</p>
+              <p className="label-pill">Next openDraw</p>
               <p className="numeral mt-2 text-[1.5rem] leading-tight font-bold">
-                {formatCountdown(remaining)}
+                {awaitingReveal ? 'Awaiting reveal' : formatCountdown(remaining)}
               </p>
               <p className="mt-1 text-[0.78rem] text-hint">
-                {stats.drawsCompleted.toString()} completed · {stats.depositorCount.toString()}{' '}
-                depositors
+                {stats.drawCount.toString()} opened · {stats.depositorCount.toString()} depositors
               </p>
             </div>
           </div>
@@ -178,76 +159,44 @@ export function AdminPage() {
           <ActionCard
             icon={MoneyBag02Icon}
             title="Fund the prize reserve"
-            body="Sends your cUSDC to the vault with the reserve tag, so the receiver hook books it as prize funding instead of a deposit. Also used as a fallback when yield harvest has not filled the reserve yet."
+            body="Mint/wrap cUSDC on Pool, then send it here with the reserve tag. This is the easy Sepolia demo path — testers see prizes pay without waiting on Morpho staging yield."
             cta="Fund reserve"
-            status={stats.reserveFunded ? 'Funded' : 'Empty'}
-            tone={stats.reserveFunded ? 'success' : 'warning'}
+            status="Admin only"
+            tone="warning"
             onClick={() => setDialog('reserve')}
             disabled={actions.isRunning}
           />
           <ActionCard
-            icon={SafeIcon}
-            title="Set the prize per draw"
-            body="The amount committed on each draw, encrypted before it is submitted. A draw pays out only if the reserve still covers it."
-            cta={stats.prizeConfigured ? 'Update prize' : 'Set prize'}
-            status={stats.prizeConfigured ? 'Configured' : 'Not set'}
-            tone={stats.prizeConfigured ? 'success' : 'warning'}
-            onClick={() => setDialog('prize')}
+            icon={DiceIcon}
+            title="Open a draw"
+            body="Permissionless once minPeriod elapses. Prefer the keeper; use this for a live demo click."
+            cta="Open draw"
+            status={openReady ? 'Ready' : 'Not ready'}
+            tone={openReady ? 'success' : 'neutral'}
+            onClick={() => setDialog('openDraw')}
             disabled={actions.isRunning}
           />
           <ActionCard
-            icon={DiceIcon}
-            title="Trigger a draw"
-            body="Runs FHE randomness and deposit-weighted selection over encrypted balances. In normal operation the backend keeper calls this when the interval elapses — use this button only for a manual or emergency draw."
-            cta="Run draw"
-            status={drawReady ? 'Ready' : 'Not ready'}
-            tone={drawReady ? 'success' : 'neutral'}
-            onClick={() => setDialog('draw')}
-            disabled={actions.isRunning}
+            icon={MoneyBag02Icon}
+            title="Harvest yield source"
+            body="Pulls any ConfidentialVaultSource harvest pot into the encrypted reserve. On Sepolia staging Morpho is idle — prefer Fund reserve for demos."
+            cta="Harvest"
+            status={stats.yieldSource ? 'Wired' : 'No source'}
+            tone={stats.yieldSource ? 'success' : 'warning'}
+            onClick={() => void actions.harvest().then((ok) => ok && refresh())}
+            disabled={actions.isRunning || !stats.yieldSource}
           />
           <ActionCard
             icon={Analytics01Icon}
             title="Publish total prizes paid"
-            body="Marks the aggregate of all claims publicly decryptable. Needs no signature to read, and unlocks only after the draw threshold. Visible on Metrics."
+            body="Marks the aggregate of all claims publicly decryptable after enough draws."
             cta="Open reveal"
             status={`${stats.drawsCompleted}/${stats.minDrawsBeforeReveal} draws`}
             tone={stats.drawsCompleted >= stats.minDrawsBeforeReveal ? 'success' : 'neutral'}
             onClick={() => setDialog('reveal')}
             disabled={actions.isRunning}
           />
-          <ActionCard
-            icon={ChartIncreaseIcon}
-            title="Publish vault TVL"
-            body="Marks the encrypted principal total publicly decryptable for Metrics. Unlocks after enough unique depositors so early single-deposit size cannot be inferred."
-            cta="Publish TVL"
-            status={`${stats.depositorCount}/${stats.minDepositsBeforeTvlReveal} depositors`}
-            tone={
-              stats.depositorCount >= stats.minDepositsBeforeTvlReveal ? 'success' : 'neutral'
-            }
-            onClick={() => void actions.requestPublicTvlReveal().then((ok) => ok && refresh())}
-            disabled={
-              actions.isRunning || stats.depositorCount < stats.minDepositsBeforeTvlReveal
-            }
-          />
         </div>
-
-        <RevealThresholdsCard
-          drawsThreshold={stats.minDrawsBeforeReveal}
-          depositsThreshold={stats.minDepositsBeforeTvlReveal}
-          busyDraws={actions.activeAction === 'setRevealThreshold'}
-          busyDeposits={actions.activeAction === 'setTvlThreshold'}
-          disabled={actions.isRunning}
-          onSaveDraws={async (value) => {
-            const ok = await actions.setMinDrawsBeforePublicReveal(value);
-            if (ok) refresh();
-            return ok;
-          }}
-          onSaveDeposits={async (value) => {
-            const ok = await actions.setMinDepositsBeforePublicTvlReveal(value);
-            if (ok) refresh();
-            return ok;
-          }}
-        />
 
         <Card>
           <div className="flex items-start gap-3">
@@ -255,11 +204,12 @@ export function AdminPage() {
               <HugeiconsIcon icon={Settings02Icon} size={17} aria-hidden />
             </div>
             <div>
-              <h3 className="font-bold">Mock yield path</h3>
+              <h3 className="font-bold">Demo vs mainnet yield</h3>
               <p className="mt-1.5 text-[0.85rem] leading-relaxed text-muted">
-                Open the Yield page to bootstrap-allocate USDC into MockYield4626, accrue a
-                fake APR, and harvest surplus into this same encrypted reserve. Production swaps
-                MockYield4626 for Morpho VaultV2; draw logic stays unchanged.
+                Sepolia: fund the reserve from Admin (this page). Optional: call harvest if the
+                adapter pot has accrued. Mainnet: swap ConfidentialVaultSource to live Morpho
+                batchers — deposits still go vault → source → vault shares; harvest fills the same
+                reserve. Draw logic does not change.
               </p>
             </div>
           </div>
@@ -267,63 +217,44 @@ export function AdminPage() {
       </div>
 
       {dialog === 'reserve' ? (
-      <AmountModal
-        onClose={() => setDialog(null)}
-        title="Fund the prize reserve"
-        description="This is the pool's mock yield. It is transferred confidentially, so the reserve size stays private."
-        icon={<HugeiconsIcon icon={MoneyBag02Icon} size={20} aria-hidden />}
-        fieldLabel="Amount to add to the reserve"
-        confirmLabel="Encrypt and fund"
-        busy={actions.activeAction === 'fundReserve'}
-        note="You need wrapped cUSDC in the admin wallet. Wrap it on the Pool page first."
-        onConfirm={async (amount) => {
-          if (!stats.reserveTag) return false;
-          const ok = await actions.fundReserve(amount, stats.reserveTag);
-          if (ok) refresh();
-          return ok;
-        }}
-      />
-      ) : null}
-
-      {dialog === 'prize' ? (
-      <AmountModal
-        onClose={() => setDialog(null)}
-        title="Set the prize per draw"
-        description="Every draw commits this amount to exactly one depositor, chosen over encrypted balances."
-        icon={<HugeiconsIcon icon={SafeIcon} size={20} aria-hidden />}
-        fieldLabel="Prize awarded each draw"
-        confirmLabel="Encrypt and set"
-        busy={actions.activeAction === 'setPrize'}
-        note="Keep this well below the reserve. If the reserve ever falls short, the draw still runs but awards an encrypted zero."
-        onConfirm={async (amount) => {
-          const ok = await actions.setPrizePerDraw(amount);
-          if (ok) refresh();
-          return ok;
-        }}
-      />
+        <AmountModal
+          onClose={() => setDialog(null)}
+          title="Fund the prize reserve"
+          description="Encrypted top-up so Apex / Pulse / Ripple can pay during the demo."
+          icon={<HugeiconsIcon icon={MoneyBag02Icon} size={20} aria-hidden />}
+          fieldLabel="Amount to add to the reserve"
+          confirmLabel="Encrypt and fund"
+          busy={actions.activeAction === 'fundReserve'}
+          note="Wrap cUSDC on the Pool page first. Suggested demo: 500–2000 cUSDC so Ripple (5) and Pulse (25) pay several rounds."
+          onConfirm={async (amount) => {
+            const ok = await actions.fundReserve(amount, stats.reserveTag);
+            if (ok) refresh();
+            return ok;
+          }}
+        />
       ) : null}
 
       <Modal
-        open={dialog === 'draw'}
+        open={dialog === 'openDraw'}
         onClose={() => setDialog(null)}
-        dismissible={actions.activeAction !== 'draw'}
+        dismissible={actions.activeAction !== 'openDraw'}
         icon={<HugeiconsIcon icon={DiceIcon} size={20} aria-hidden />}
-        title="Run the next draw"
-        description="Selection happens entirely onchain over ciphertexts. The keeper normally submits this; use it here only if you need a manual run."
+        title="Open the next draw"
+        description="Freezes TWAB weight and draws encrypted R. Keeper reveals + accrues next."
         footer={
           <>
             <Button
               fullWidth
-              loading={actions.activeAction === 'draw'}
-              disabled={actions.isRunning || !drawReady}
+              loading={actions.activeAction === 'openDraw'}
+              disabled={actions.isRunning || !openReady}
               onClick={async () => {
-                if (await actions.triggerDraw()) {
+                if (await actions.openDraw()) {
                   refresh();
                   setDialog(null);
                 }
               }}
             >
-              Run draw
+              Open draw
             </Button>
             <Button
               variant="secondary"
@@ -337,34 +268,33 @@ export function AdminPage() {
         }
       >
         <ul className="space-y-2">
-          <Requirement met={stats.prizeConfigured} label="Prize per draw is configured" />
-          <Requirement met={stats.reserveFunded} label="Prize reserve is funded" />
+          <Requirement met={stats.tiersConfigured} label="Apex / Pulse / Ripple configured" />
           <Requirement met={stats.depositorCount > 0n} label="At least one depositor" />
           <Requirement
             met={remaining === 0}
             label={
               remaining === 0
-                ? 'Draw interval has elapsed'
-                : `Draw interval elapses in ${formatCountdown(remaining)}`
+                ? 'minPeriod has elapsed'
+                : `minPeriod elapses in ${formatCountdown(remaining)}`
             }
           />
         </ul>
       </Modal>
 
       {dialog === 'reveal' ? (
-      <RevealModal
-        onClose={() => setDialog(null)}
-        drawsCompleted={stats.drawsCompleted}
-        requiredDraws={stats.minDrawsBeforeReveal}
-        revealedHandle={stats.revealedHandle}
-        currentHandle={stats.totalPrizesPaidHandle}
-        busy={actions.activeAction === 'reveal'}
-        onRequestReveal={async () => {
-          const ok = await actions.requestReveal();
-          if (ok) refresh();
-          return ok;
-        }}
-      />
+        <RevealModal
+          onClose={() => setDialog(null)}
+          drawsCompleted={stats.drawsCompleted}
+          requiredDraws={stats.minDrawsBeforeReveal}
+          revealedHandle={stats.revealedHandle}
+          currentHandle={stats.totalPrizesPaidHandle}
+          busy={actions.activeAction === 'reveal'}
+          onRequestReveal={async () => {
+            const ok = await actions.requestReveal();
+            if (ok) refresh();
+            return ok;
+          }}
+        />
       ) : null}
     </div>
   );

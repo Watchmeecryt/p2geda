@@ -17,13 +17,9 @@ async function main() {
 
   const underlyingToken = process.env.USDC_MOCK_ADDRESS ?? DEFAULT_USDC_MOCK;
   const confidentialToken = process.env.CUSDC_MOCK_ADDRESS ?? DEFAULT_CUSDC_MOCK;
-  const depositWindow = Number(process.env.DEPOSIT_WINDOW_SECONDS ?? "120");
-  const drawInterval = Number(process.env.DRAW_INTERVAL_SECONDS ?? "180");
-  if (!Number.isSafeInteger(depositWindow) || depositWindow <= 0) {
-    throw new Error("DEPOSIT_WINDOW_SECONDS must be a positive integer.");
-  }
-  if (!Number.isSafeInteger(drawInterval) || drawInterval <= 0) {
-    throw new Error("DRAW_INTERVAL_SECONDS must be a positive integer.");
+  const minPeriod = Number(process.env.MIN_PERIOD_SECONDS ?? "120");
+  if (!Number.isSafeInteger(minPeriod) || minPeriod <= 0) {
+    throw new Error("MIN_PERIOD_SECONDS must be a positive integer.");
   }
 
   for (const [label, address] of [
@@ -35,23 +31,30 @@ async function main() {
     }
   }
 
-  console.log(`Deploying ConfiPool from ${deployer.address}`);
+  console.log(`Deploying ConfiPool V5 vault from ${deployer.address}`);
   console.log(`Underlying USDC Mock: ${underlyingToken}`);
   console.log(`Confidential cUSDCMock: ${confidentialToken}`);
-  console.log(`Deposit window: ${depositWindow}s · draw delay: ${drawInterval}s`);
+  console.log(`minPeriod: ${minPeriod}s`);
 
   const factory = await ethers.getContractFactory("ConfidentialPrizeVault", deployer);
   const vault = await factory.deploy(
     confidentialToken,
     underlyingToken,
-    depositWindow,
-    drawInterval,
+    minPeriod,
     deployer.address,
   );
   await vault.waitForDeployment();
 
   const vaultAddress = await vault.getAddress();
   const receipt = await vault.deploymentTransaction()?.wait();
+
+  // Demo-friendly Apex / Pulse / Ripple (6-decimal units).
+  const UNIT = 10n ** 6n;
+  await (
+    await vault.setTiers([100n * UNIT, 25n * UNIT, 5n * UNIT], [100n, 10n, 1n])
+  ).wait();
+  console.log("setTiers Apex/Pulse/Ripple OK");
+
   const deployment = {
     chainId: 11155111,
     network: "sepolia",
@@ -59,10 +62,16 @@ async function main() {
     vault: vaultAddress,
     underlyingToken,
     confidentialToken,
-    depositWindow,
-    drawInterval,
+    minPeriod,
+    tiers: {
+      apex: (100n * UNIT).toString(),
+      pulse: (25n * UNIT).toString(),
+      ripple: (5n * UNIT).toString(),
+      k: [100, 10, 1],
+    },
     deployedAt: new Date().toISOString(),
     transactionHash: receipt?.hash ?? null,
+    note: "V5 TWAB vault. Attach ConfidentialVaultSource with deploy:vault-source:sepolia VAULT_ADDRESS=…",
   };
 
   const outputDir = resolve(__dirname, "..", "deployments");
@@ -73,6 +82,7 @@ async function main() {
   console.log(`ConfiPool vault deployed: ${vaultAddress}`);
   console.log(`Deployment written to ${outputPath}`);
   console.log(`Frontend env: VITE_CONFIPOOL_VAULT_ADDRESS=${vaultAddress}`);
+  console.log(`Next: VAULT_ADDRESS=${vaultAddress} npm run deploy:vault-source:sepolia`);
 }
 
 main().catch((error) => {

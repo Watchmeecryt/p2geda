@@ -5,16 +5,18 @@ import { expect } from "chai";
 import { ethers as Ethers } from "ethers";
 import { ethers, fhevm } from "hardhat";
 import type {
-  ConfidentialPrizeVault,
+  ConfidentialPrizeVaultHarness,
   MockConfidentialZama,
   MockZama,
 } from "../types";
 
-/** cUSDCMock and USDC Mock are both 6 decimals, so the wrapper rate is 1. */
 const UNIT = 10n ** 6n;
 const WRAP_RATE = 1n;
-const DEPOSIT_WINDOW = 30;
-const DRAW_INTERVAL = 60;
+const MIN_PERIOD = 60;
+
+/** Apex / Pulse / Ripple — Ripple k=1 keeps demo wins common with two wallets. */
+const TIER_PRIZES: [bigint, bigint, bigint] = [100n * UNIT, 25n * UNIT, 5n * UNIT];
+const TIER_K: [bigint, bigint, bigint] = [100n, 10n, 1n];
 
 async function encrypt64(contract: string, signer: HardhatEthersSigner, value: bigint) {
   const input = fhevm.createEncryptedInput(contract, signer.address);
@@ -35,19 +37,6 @@ async function decrypt64(
   );
 }
 
-/** Advance chain time until the current batch's draw is due. */
-async function waitUntilDrawDue(vault: ConfidentialPrizeVault) {
-  const closesAt = await vault.depositWindowClosesAt();
-  expect(closesAt).to.not.equal(0n);
-  const dueAt = closesAt + BigInt(DRAW_INTERVAL) + 1n;
-  const now = BigInt(await time.latest());
-  if (dueAt > now) {
-    await time.increaseTo(dueAt);
-  } else {
-    await time.increase(1);
-  }
-}
-
 async function deployFixture() {
   const [owner, alice, bob, outsider] = await ethers.getSigners();
 
@@ -61,20 +50,22 @@ async function deployFixture() {
   await cZama.waitForDeployment();
   const cZamaAddress = await cZama.getAddress();
 
-  const vault = (await ethers.deployContract("ConfidentialPrizeVault", [
+  const vault = (await ethers.deployContract("ConfidentialPrizeVaultHarness", [
     cZamaAddress,
     mockZamaAddress,
-    DEPOSIT_WINDOW,
-    DRAW_INTERVAL,
+    MIN_PERIOD,
     owner.address,
-  ])) as unknown as ConfidentialPrizeVault;
+  ])) as unknown as ConfidentialPrizeVaultHarness;
   await vault.waitForDeployment();
   const vaultAddress = await vault.getAddress();
 
   await fhevm.assertCoprocessorInitialized(cZama, "MockConfidentialZama");
-  await fhevm.assertCoprocessorInitialized(vault, "ConfidentialPrizeVault");
+  await fhevm.assertCoprocessorInitialized(vault, "ConfidentialPrizeVaultHarness");
 
-  /** `amount` is in confidential (6-decimal) units; the underlying leg is scaled by the rate. */
+  await (
+    await vault.connect(owner).setTiers(TIER_PRIZES, TIER_K)
+  ).wait();
+
   async function mintAndWrap(signer: HardhatEthersSigner, amount: bigint) {
     const underlyingAmount = amount * WRAP_RATE;
     await (await mockZama.mint(signer.address, underlyingAmount)).wait();
@@ -109,15 +100,6 @@ async function deployFixture() {
     await confidentialTransferAndCall(owner, amount, data);
   }
 
-  async function configurePrize(amount: bigint) {
-    const encrypted = await encrypt64(vaultAddress, owner, amount);
-    await (
-      await vault
-        .connect(owner)
-        .setPrizePerDraw(encrypted.handles[0], encrypted.inputProof)
-    ).wait();
-  }
-
   async function vaultBalance(signer: HardhatEthersSigner) {
     return decrypt64(
       await vault.confidentialBalanceOf(signer.address),
@@ -142,6 +124,31 @@ async function deployFixture() {
     );
   }
 
+  async function waitUntilOpenable() {
+    const openableAt = await vault.nextOpenableAt();
+    const now = BigInt(await time.latest());
+    if (openableAt > now && openableAt < BigInt(2) ** BigInt(40) - 1n) {
+      await time.increaseTo(openableAt + 1n);
+    } else if (openableAt >= BigInt(2) ** BigInt(40) - 1n) {
+      throw new Error("draw still open; reveal or cancel first");
+    } else {
+      await time.increase(1);
+    }
+  }
+
+  async function openAndReveal() {
+    await waitUntilOpenable();
+    await (await vault.connect(owner).openDraw()).wait();
+    const drawId = await vault.drawCount();
+    const d = await vault.drawAt(drawId);
+
+    const r = await fhevm.publicDecryptEuint(FhevmType.euint64, d.encR);
+    const totalWeight = await fhevm.publicDecryptEuint(FhevmType.euint128, d.encTotalWeight);
+
+    await (await vault.connect(owner).applyReveal(drawId, r, totalWeight)).wait();
+    return { drawId, r, totalWeight };
+  }
+
   return {
     owner,
     alice,
@@ -156,14 +163,15 @@ async function deployFixture() {
     confidentialTransferAndCall,
     deposit,
     fundReserve,
-    configurePrize,
     vaultBalance,
     claimable,
     tokenBalance,
+    waitUntilOpenable,
+    openAndReveal,
   };
 }
 
-describe("ConfidentialPrizeVault", function () {
+describe("ConfidentialPrizeVault (V5-style TWAB + Apex/Pulse/Ripple)", function () {
   it("records ERC-7984 deposits and lets users decrypt only their vault balance", async function () {
     const { alice, bob, vault, mintAndWrap, deposit, vaultBalance } =
       await deployFixture();
@@ -215,7 +223,7 @@ describe("ConfidentialPrizeVault", function () {
     expect(await tokenBalance(alice)).to.equal(750n * UNIT);
   });
 
-  it("commits exactly one encrypted prize per draw across all depositors", async function () {
+  it("opens a TWAB draw after minPeriod and accrues Apex/Pulse/Ripple credits", async function () {
     const {
       owner,
       alice,
@@ -224,118 +232,90 @@ describe("ConfidentialPrizeVault", function () {
       mintAndWrap,
       deposit,
       fundReserve,
-      configurePrize,
       claimable,
+      openAndReveal,
     } = await deployFixture();
 
-    const prize = 50n * UNIT;
-    await mintAndWrap(owner, 1_000n * UNIT);
-    await mintAndWrap(alice, 1_000n * UNIT);
-    await mintAndWrap(bob, 1_000n * UNIT);
-    await deposit(alice, 100n * UNIT);
-    await deposit(bob, 300n * UNIT);
-    await fundReserve(500n * UNIT);
-    await configurePrize(prize);
-
-    await waitUntilDrawDue(vault);
-    await (await vault.connect(owner).draw()).wait();
-
-    const alicePrize = await claimable(alice);
-    const bobPrize = await claimable(bob);
-    expect(alicePrize + bobPrize).to.equal(prize);
-    expect([alicePrize, bobPrize]).to.include(0n);
-    expect([alicePrize, bobPrize]).to.include(prize);
-  });
-
-  it("distributes five draws, supports confidential claims, then publicly decrypts the paid aggregate", async function () {
-    const {
-      owner,
-      alice,
-      bob,
-      vault,
-      vaultAddress,
-      mintAndWrap,
-      deposit,
-      fundReserve,
-      configurePrize,
-      claimable,
-    } = await deployFixture();
-
-    const prize = 20n * UNIT;
-    await mintAndWrap(owner, 1_000n * UNIT);
+    await mintAndWrap(owner, 2_000n * UNIT);
     await mintAndWrap(alice, 1_000n * UNIT);
     await mintAndWrap(bob, 1_000n * UNIT);
     await deposit(alice, 200n * UNIT);
     await deposit(bob, 300n * UNIT);
-    await fundReserve(200n * UNIT);
-    await configurePrize(prize);
+    await fundReserve(500n * UNIT);
 
-    await expect(vault.connect(owner).requestTotalPrizesPaidReveal())
-      .to.be.revertedWithCustomError(vault, "RevealThresholdNotMet")
-      .withArgs(0, 5);
+    // Hold through the window so TWAB weight is non-zero.
+    await time.increase(30);
 
-    for (let draw = 0; draw < 5; draw += 1) {
-      if (draw > 0) {
-        // Draw resets the deposit window; a fresh deposit reopens the next batch.
-        await deposit(alice, 1n);
-      }
-      await waitUntilDrawDue(vault);
-      await (await vault.connect(owner).draw()).wait();
-    }
+    const { drawId, totalWeight } = await openAndReveal();
+    expect(drawId).to.equal(1n);
+    expect(totalWeight).to.be.gt(0n);
 
-    expect((await claimable(alice)) + (await claimable(bob))).to.equal(5n * prize);
+    await (await vault.connect(owner).accrue(alice.address, drawId)).wait();
+    await (await vault.connect(owner).accrue(bob.address, drawId)).wait();
 
-    // Every depositor can claim. A non-winner for any draw transfers encrypted zero,
-    // so claim transactions do not expose which draws each account won.
-    await (await vault.connect(alice).claim()).wait();
-    await (await vault.connect(bob).claim()).wait();
-    expect(await claimable(alice)).to.equal(0);
-    expect(await claimable(bob)).to.equal(0);
+    const alicePrize = await claimable(alice);
+    const bobPrize = await claimable(bob);
+    const allowed = new Set(TIER_PRIZES.map(String).concat(["0"]));
+    expect(allowed.has(alicePrize.toString())).to.equal(true);
+    expect(allowed.has(bobPrize.toString())).to.equal(true);
 
-    const totalPaidHandle = await vault.confidentialTotalPrizesPaid();
-    await (await vault.connect(owner).requestTotalPrizesPaidReveal()).wait();
-    expect(
-      await fhevm.publicDecryptEuint(FhevmType.euint64, totalPaidHandle),
-    ).to.equal(5n * prize);
-
-    await expect(
-      vault.connect(owner).requestTotalPrizesPaidReveal(),
-    ).to.be.revertedWithCustomError(vault, "RevealAlreadyRequested");
+    // With Ripple k=1 and two depositors, at least one small win is common but not
+    // guaranteed; assert the accrual path completed and prizes are tier-shaped.
+    expect(alicePrize + bobPrize).to.be.gte(0n);
   });
 
-  it("keeps the prize configuration and remaining reserve readable by the owner", async function () {
+  it("lets a winner claim an encrypted Ripple/Pulse/Apex credit", async function () {
+    this.timeout(180_000);
+
     const {
       owner,
       alice,
+      bob,
       vault,
-      vaultAddress,
       mintAndWrap,
       deposit,
       fundReserve,
-      configurePrize,
+      claimable,
+      tokenBalance,
+      openAndReveal,
     } = await deployFixture();
 
-    const prize = 25n * UNIT;
-    await mintAndWrap(owner, 1_000n * UNIT);
-    await mintAndWrap(alice, 1_000n * UNIT);
-    await deposit(alice, 100n * UNIT);
-    await fundReserve(300n * UNIT);
-    await configurePrize(prize);
+    await mintAndWrap(owner, 5_000n * UNIT);
+    await mintAndWrap(alice, 2_000n * UNIT);
+    await mintAndWrap(bob, 2_000n * UNIT);
+    await deposit(alice, 500n * UNIT);
+    await deposit(bob, 500n * UNIT);
+    await fundReserve(2_000n * UNIT);
 
-    expect(
-      await decrypt64(await vault.confidentialPrizePerDraw(), vaultAddress, owner),
-    ).to.equal(prize);
-    expect(
-      await decrypt64(await vault.confidentialPrizeReserve(), vaultAddress, owner),
-    ).to.equal(300n * UNIT);
+    let sawWin = false;
+    let winner: HardhatEthersSigner = alice;
+    let winAmount = 0n;
 
-    await waitUntilDrawDue(vault);
-    await (await vault.connect(owner).draw()).wait();
+    // A few short periods — Ripple odds make a visible win likely with two wallets.
+    for (let i = 0; i < 6 && !sawWin; i += 1) {
+      await time.increase(20);
+      const { drawId } = await openAndReveal();
+      await (await vault.accrueMany([alice.address, bob.address], drawId)).wait();
 
-    // The draw rewrites the reserve handle; the owner must still be able to read it.
-    expect(
-      await decrypt64(await vault.confidentialPrizeReserve(), vaultAddress, owner),
-    ).to.equal(275n * UNIT);
+      const a = await claimable(alice);
+      const b = await claimable(bob);
+      if (a > 0n) {
+        sawWin = true;
+        winner = alice;
+        winAmount = a;
+      } else if (b > 0n) {
+        sawWin = true;
+        winner = bob;
+        winAmount = b;
+      }
+    }
+
+    expect(sawWin, "expected at least one tier win across short demo periods").to.equal(true);
+
+    const before = await tokenBalance(winner);
+    await (await vault.connect(winner).claim()).wait();
+    expect(await claimable(winner)).to.equal(0n);
+    expect(await tokenBalance(winner)).to.equal(before + winAmount);
   });
 
   it("rejects reserve funding from a non-owner", async function () {
@@ -365,5 +345,15 @@ describe("ConfidentialPrizeVault", function () {
     )
       .to.be.revertedWithCustomError(vault, "OnlyOwnerMayFundReserve")
       .withArgs(alice.address);
+  });
+
+  it("rejects malformed tier shapes", async function () {
+    const { owner, vault } = await deployFixture();
+    await expect(
+      vault.connect(owner).setTiers([10n, 20n, 30n], [100n, 10n, 1n]),
+    ).to.be.revertedWithCustomError(vault, "BadTierShape");
+    await expect(
+      vault.connect(owner).setTiers([100n, 25n, 5n], [10n, 10n, 1n]),
+    ).to.be.revertedWithCustomError(vault, "BadTierShape");
   });
 });

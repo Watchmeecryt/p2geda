@@ -1,0 +1,14 @@
+{
+  "source": "https://docs.zama.org/protocol/confidential-vault/reference/addresses",
+  "network": "ethereum",
+  "chainId": 1,
+  "deployBlock": 25375123,
+  "note": "Official Zama confidential-vault mainnet addresses. Yield source: Morpho Steakhouse Confidential Prime USDC VaultV2.",
+  "depositBatcher": "0x324EA89FD3784036673BfE6Ffee2334A088F40Cc",
+  "redeemBatcher": "0x96Cd3Faa7483783Ac2Eb715f6333361500F1eec9",
+  "cUSDC": "0xe978F22157048E5DB8E5d07971376e86671672B2",
+  "cShare": "0x66Bf74E96900D1a19c7070D939D124f2F565C458",
+  "erc4626UnderlyingVault": "0xbEEF00A59B577423653A1526c7009bdE103F542B",
+  "whitelistGate": "0x47C591A3BC346913d0b6bDD96FB50E34efA268Aa",
+  "USDC": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+}

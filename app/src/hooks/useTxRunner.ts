@@ -19,17 +19,12 @@ export type TxAction =
   | 'deposit'
   | 'withdraw'
   | 'claim'
-  | 'setPrize'
   | 'fundReserve'
-  | 'draw'
+  | 'openDraw'
+  | 'accrue'
+  | 'harvest'
   | 'reveal'
-  | 'revealTvl'
-  | 'setRevealThreshold'
-  | 'setTvlThreshold'
-  | 'bootstrapAllocate'
-  | 'accrueYield'
-  | 'yieldDeposit'
-  | 'fundYieldPrize';
+  | 'setRevealThreshold';
 
 export type TxRunner = {
   /** True while any flow runs. Use to disable inputs, not to drive a spinner. */

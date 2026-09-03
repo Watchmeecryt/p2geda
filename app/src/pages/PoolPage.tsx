@@ -4,6 +4,7 @@ import { ConnectPrompt } from '@/components/layout/ConnectPrompt';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { FundingCard } from '@/components/pool/FundingCard';
 import { DepositWithdrawCard } from '@/components/pool/DepositWithdrawCard';
+import { HowItWorksCard } from '@/components/pool/HowItWorksCard';
 import { PositionCard } from '@/components/pool/PositionCard';
 import { PoolStatsCard } from '@/components/pool/PoolStatsCard';
 import { useConfiPoolActions } from '@/hooks/useConfiPoolActions';
@@ -26,8 +27,8 @@ export function PoolPage() {
     stats.refetch();
   }, [position, stats]);
 
-  const runDraw = useCallback(async () => {
-    if (await actions.triggerDraw()) {
+  const runOpenDraw = useCallback(async () => {
+    if (await actions.openDraw()) {
       refresh();
     }
   }, [actions, refresh]);
@@ -37,11 +38,12 @@ export function PoolPage() {
       <PageHeader
         kicker="Pool"
         title="Save privately, win together"
-        description="Deposit the confidential test token to enter every draw. Your principal never leaves your control, and your amounts never leave your wallet in the clear."
+        description="Deposit confidential cUSDC anytime. Time-weighted balance earns Apex / Pulse / Ripple odds. Principal stays yours."
       />
 
       {!isConnected ? (
-        <div className="mt-8">
+        <div className="mt-8 grid gap-5">
+          <HowItWorksCard />
           <ConnectPrompt />
         </div>
       ) : (
@@ -66,12 +68,11 @@ export function PoolPage() {
               vaultBalance={view.vaultValue(position.balanceHandle)}
               decrypting={view.decrypting}
               isDepositor={position.isDepositor}
-              depositsOpen={stats.depositsOpen}
-              depositWindowClosesAt={stats.depositWindowClosesAt}
               onDeposit={actions.deposit}
               onWithdraw={actions.withdraw}
               onDone={refresh}
             />
+            <HowItWorksCard />
           </div>
 
           <div className="grid gap-5">
@@ -84,9 +85,9 @@ export function PoolPage() {
             />
             <PoolStatsCard
               stats={stats}
-              canDraw
-              drawing={actions.activeAction === 'draw'}
-              onDraw={runDraw}
+              canOpen
+              opening={actions.activeAction === 'openDraw'}
+              onOpenDraw={runOpenDraw}
             />
           </div>
         </div>

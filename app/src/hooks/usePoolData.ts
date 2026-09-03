@@ -3,38 +3,47 @@ import { sepolia } from 'viem/chains';
 import type { Address, Hex } from 'viem';
 import {
   CUSDC_MOCK_ADDRESS,
+  DRAW_STATUS,
   ERC20_ABI,
   ERC7984_WRAPPER_ABI,
-  UNINITIALIZED_HANDLE,
   MAX_DEPOSITORS,
+  UNINITIALIZED_HANDLE,
+  USDC_MOCK_ADDRESS,
   VAULT_ABI,
   VAULT_ADDRESS,
-  USDC_MOCK_ADDRESS,
 } from '@/lib/contracts';
 
 const POLL_MS = 12_000;
 
 export type PoolStats = {
   owner: Address | undefined;
-  drawInterval: bigint;
-  depositWindowDuration: bigint;
-  depositWindowOpensAt: bigint;
-  depositWindowClosesAt: bigint;
-  depositsOpen: boolean;
+  /** Minimum seconds between consecutive draw windows (demo = 120). */
+  minPeriod: bigint;
+  genesis: bigint;
+  /** Unix seconds when the next openDraw is allowed. */
+  nextOpenableAt: bigint;
+  /** Alias used by countdown UI — same as nextOpenableAt. */
   nextDrawAt: bigint;
-  lastDrawAt: bigint;
+  drawCount: bigint;
+  /** Alias for drawCount. */
   drawsCompleted: bigint;
   depositorCount: bigint;
   maxDepositors: bigint;
-  minDrawsBeforeReveal: bigint;
-  minDepositsBeforeTvlReveal: bigint;
+  tiersConfigured: boolean;
+  /** Alias — tiers live means draws can award prizes. */
   prizeConfigured: boolean;
-  reserveFunded: boolean;
+  apexPrize: bigint;
+  pulsePrize: bigint;
+  ripplePrize: bigint;
   reserveTag: Hex | undefined;
+  yieldSource: Address | undefined;
+  minDrawsBeforeReveal: bigint;
   revealedHandle: Hex | undefined;
-  publicTvlHandle: Hex | undefined;
   totalPrizesPaidHandle: Hex | undefined;
-  totalPrincipalHandle: Hex | undefined;
+  currentDrawId: number;
+  currentDrawStatus: number;
+  currentDrawEncR: Hex | undefined;
+  currentDrawEncTotalWeight: Hex | undefined;
   isLoading: boolean;
   refetch: () => void;
 };
@@ -45,24 +54,20 @@ export function usePoolStats(): PoolStats {
   const { data, isLoading, refetch } = useReadContracts({
     contracts: [
       { ...VAULT_CONTRACT, functionName: 'owner' },
-      { ...VAULT_CONTRACT, functionName: 'drawInterval' },
-      { ...VAULT_CONTRACT, functionName: 'depositWindowDuration' },
-      { ...VAULT_CONTRACT, functionName: 'depositWindowOpensAt' },
-      { ...VAULT_CONTRACT, functionName: 'depositWindowClosesAt' },
-      { ...VAULT_CONTRACT, functionName: 'depositsOpen' },
-      { ...VAULT_CONTRACT, functionName: 'nextDrawAt' },
-      { ...VAULT_CONTRACT, functionName: 'lastDrawAt' },
-      { ...VAULT_CONTRACT, functionName: 'drawsCompleted' },
+      { ...VAULT_CONTRACT, functionName: 'minPeriod' },
+      { ...VAULT_CONTRACT, functionName: 'genesis' },
+      { ...VAULT_CONTRACT, functionName: 'nextOpenableAt' },
+      { ...VAULT_CONTRACT, functionName: 'drawCount' },
       { ...VAULT_CONTRACT, functionName: 'depositorCount' },
-      { ...VAULT_CONTRACT, functionName: 'minDrawsBeforePublicReveal' },
-      { ...VAULT_CONTRACT, functionName: 'prizePerDrawConfigured' },
-      { ...VAULT_CONTRACT, functionName: 'prizeReserveFunded' },
+      { ...VAULT_CONTRACT, functionName: 'tiersConfigured' },
+      { ...VAULT_CONTRACT, functionName: 'apexPrize' },
+      { ...VAULT_CONTRACT, functionName: 'tierPrize', args: [1n] },
+      { ...VAULT_CONTRACT, functionName: 'tierPrize', args: [2n] },
       { ...VAULT_CONTRACT, functionName: 'RESERVE_DEPOSIT_TAG' },
+      { ...VAULT_CONTRACT, functionName: 'yieldSource' },
+      { ...VAULT_CONTRACT, functionName: 'minDrawsBeforePublicReveal' },
       { ...VAULT_CONTRACT, functionName: 'lastTotalPaidRevealHandle' },
       { ...VAULT_CONTRACT, functionName: 'confidentialTotalPrizesPaid' },
-      { ...VAULT_CONTRACT, functionName: 'minDepositsBeforePublicTvlReveal' },
-      { ...VAULT_CONTRACT, functionName: 'lastPublicTvlRevealHandle' },
-      { ...VAULT_CONTRACT, functionName: 'confidentialTotalPrincipal' },
     ],
     query: { refetchInterval: POLL_MS },
   });
@@ -70,40 +75,76 @@ export function usePoolStats(): PoolStats {
   const value = <T,>(index: number, fallback: T): T =>
     (data?.[index]?.status === 'success' ? (data[index].result as T) : fallback);
 
+  const drawCount = value<number | bigint>(4, 0);
+  const drawCountBig = typeof drawCount === 'bigint' ? drawCount : BigInt(drawCount);
+  const currentDrawId = Number(drawCountBig);
+
+  const { data: drawData, refetch: refetchDraw } = useReadContract({
+    ...VAULT_CONTRACT,
+    functionName: 'drawAt',
+    args: [currentDrawId > 0 ? currentDrawId : 0],
+    query: {
+      enabled: currentDrawId > 0,
+      refetchInterval: POLL_MS,
+    },
+  });
+
+  const nextOpenableAt = BigInt(value<number | bigint>(3, 0));
+
+  let currentDrawStatus: number = DRAW_STATUS.None;
+  let currentDrawEncR: Hex | undefined;
+  let currentDrawEncTotalWeight: Hex | undefined;
+  if (drawData && currentDrawId > 0) {
+    const row = drawData as readonly [
+      number | bigint,
+      number | bigint,
+      number,
+      Hex,
+      Hex,
+      number | bigint,
+      number | bigint,
+    ];
+    currentDrawStatus = Number(row[2]);
+    currentDrawEncR = row[3] === UNINITIALIZED_HANDLE ? undefined : row[3];
+    currentDrawEncTotalWeight = row[4] === UNINITIALIZED_HANDLE ? undefined : row[4];
+  }
+
   return {
     owner: value<Address | undefined>(0, undefined),
-    drawInterval: value(1, 0n),
-    depositWindowDuration: value(2, 0n),
-    depositWindowOpensAt: value(3, 0n),
-    depositWindowClosesAt: value(4, 0n),
-    depositsOpen: value(5, true),
-    nextDrawAt: value(6, 0n),
-    lastDrawAt: value(7, 0n),
-    drawsCompleted: value(8, 0n),
-    depositorCount: value(9, 0n),
+    minPeriod: BigInt(value<number | bigint>(1, 0)),
+    genesis: BigInt(value<number | bigint>(2, 0)),
+    nextOpenableAt,
+    nextDrawAt: nextOpenableAt,
+    drawCount: drawCountBig,
+    drawsCompleted: drawCountBig,
+    depositorCount: value(5, 0n),
     maxDepositors: MAX_DEPOSITORS,
-    minDrawsBeforeReveal: value(10, 5n),
-    prizeConfigured: value(11, false),
-    reserveFunded: value(12, false),
-    reserveTag: value<Hex | undefined>(13, undefined),
-    revealedHandle: value<Hex | undefined>(14, undefined),
-    totalPrizesPaidHandle: value<Hex | undefined>(15, undefined),
-    minDepositsBeforeTvlReveal: value(16, 3n),
-    publicTvlHandle: value<Hex | undefined>(17, undefined),
-    totalPrincipalHandle: value<Hex | undefined>(18, undefined),
+    tiersConfigured: value(6, false),
+    prizeConfigured: value(6, false),
+    apexPrize: BigInt(value<number | bigint>(7, 0)),
+    pulsePrize: BigInt(value<number | bigint>(8, 0)),
+    ripplePrize: BigInt(value<number | bigint>(9, 0)),
+    reserveTag: value<Hex | undefined>(10, undefined),
+    yieldSource: value<Address | undefined>(11, undefined),
+    minDrawsBeforeReveal: value(12, 5n),
+    revealedHandle: value<Hex | undefined>(13, undefined),
+    totalPrizesPaidHandle: value<Hex | undefined>(14, undefined),
+    currentDrawId,
+    currentDrawStatus,
+    currentDrawEncR,
+    currentDrawEncTotalWeight,
     isLoading,
-    refetch: () => void refetch(),
+    refetch: () => {
+      void refetch();
+      void refetchDraw();
+    },
   };
 }
 
 export type UserPosition = {
-  /** Encrypted vault principal handle for the connected account. */
   balanceHandle: Hex | undefined;
-  /** Encrypted unclaimed winnings handle. */
   claimableHandle: Hex | undefined;
-  /** Encrypted cUSDC wallet balance handle. */
   walletHandle: Hex | undefined;
-  /** True once the account has any recorded deposit, which gates withdraw/claim. */
   isDepositor: boolean;
   underlyingBalance: bigint;
   allowance: bigint;
@@ -157,7 +198,6 @@ export function useUserPosition(): UserPosition {
     balanceHandle,
     claimableHandle: handle(1),
     walletHandle: handle(2),
-    // The vault only initialises a balance handle after a recorded deposit.
     isDepositor: Boolean(balanceHandle),
     underlyingBalance:
       data?.[3]?.status === 'success' ? (data[3].result as bigint) : 0n,

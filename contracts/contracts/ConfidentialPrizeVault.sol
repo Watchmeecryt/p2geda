@@ -4,147 +4,153 @@ pragma solidity ^0.8.28;
 import {FHE, ebool, euint64, euint128, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
 import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {IERC7984} from "@openzeppelin/confidential-contracts/interfaces/IERC7984.sol";
-import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfaces/IERC7984ERC20Wrapper.sol";
 import {IERC7984Receiver} from "@openzeppelin/confidential-contracts/interfaces/IERC7984Receiver.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {IConfidentialPrizeVault} from "./interfaces/IConfidentialPrizeVault.sol";
-import {IPrizeReserve} from "./interfaces/IPrizeReserve.sol";
-import {EncryptedSlotDraw} from "./libraries/EncryptedSlotDraw.sol";
+import {IYieldSource} from "./interfaces/IYieldSource.sol";
 
 /// @title ConfiPool Confidential Prize Vault
-/// @notice No-loss prize savings: ERC-7984 deposits, encrypted balances, onchain
-///         `FHE.randEuint64` draws weighted by time-in-bus deposit size, encrypted claims,
-///         and principal exits that redeem only the needed clear slice from the yield venue.
-/// @dev V2 keeps ConfiPool's single-vault product surface. Gaps filled vs V1:
-///      time-in-bus weighting, encrypted slot draws (batched settle, no cumulative HCU wall),
-///      and sized yield redeems on allocated withdraws.
+/// @notice Confidential no-loss prize savings with PoolTogether V5-style TWAB weighting
+///         and independent Apex / Pulse / Ripple prize tiers.
+/// @dev Deposits stay encrypted (ERC-7984). Each draw freezes a time-weighted window,
+///      publishes aggregate randomness + total weight via KMS public-decrypt, then awards
+///      each participant independently against plaintext thresholds. Yield funds the reserve
+///      through `IYieldSource` (mock on Sepolia, Morpho adapter on mainnet).
 contract ConfidentialPrizeVault is
     ZamaEthereumConfig,
     IERC7984Receiver,
     IConfidentialPrizeVault,
-    IPrizeReserve,
     Ownable,
     ReentrancyGuard
 {
-    using SafeERC20 for IERC20;
-
-    /// @notice Max depositors in the registry.
+    /// @notice Max tracked depositors (enumeration for keeper accrual batches).
     uint256 public constant MAX_DEPOSITORS = 256;
-    /// @notice Max depositors credited in one settle transaction.
-    uint256 public constant MAX_SETTLE_PER_TX = 32;
-    /// @notice Public slot width per depositor index (also clamps per-user odds).
-    uint64 public constant SLOT_WIDTH = 1_000_000_000_000;
+    /// @notice Max accounts processed in one `accrueMany` call.
+    uint256 public constant MAX_ACCRUE_BATCH = 16;
+    /// @notice Three ConfiPool tiers: Apex (rarest), Pulse (mid), Ripple (most frequent).
+    uint8 public constant TIERS = 3;
+    uint8 public constant TIER_APEX = 0;
+    uint8 public constant TIER_PULSE = 1;
+    uint8 public constant TIER_RIPPLE = 2;
+
     bytes32 public constant RESERVE_DEPOSIT_TAG = keccak256("CONFIPOOL_PRIZE_RESERVE");
 
-    uint256 public minDrawsBeforePublicReveal = 5;
-    uint256 public minDepositsBeforePublicTvlReveal = 3;
+    /// @notice How long an opened draw may sit before anyone may cancel it.
+    uint40 public constant CANCEL_AFTER = 24 hours;
 
     IERC7984 private immutable _confidentialToken;
     address private immutable _underlyingToken;
-    uint256 private immutable _depositWindowDuration;
-    uint256 private immutable _drawInterval;
+    /// @notice Minimum seconds between consecutive draw windows (short on Sepolia demos).
+    uint40 public immutable minPeriod;
+    uint40 public immutable genesis;
 
-    mapping(address account => euint64 balance) private _balances;
-    mapping(address account => euint64 claimable) private _claimable;
-    mapping(address account => bool registered) private _isDepositor;
-    mapping(address account => uint64 joinedAt) private _joinedAt;
+    struct Observation {
+        uint40 timestamp;
+        euint64 balance;
+        euint128 cumulative;
+    }
+
+    enum DrawStatus {
+        None,
+        Open,
+        Revealed,
+        Cancelled
+    }
+
+    struct Draw {
+        uint40 periodStart;
+        uint40 snapshotAt;
+        DrawStatus status;
+        euint64 encR;
+        euint128 encTotalWeight;
+        uint64 r;
+        uint128 totalWeight;
+    }
+
+    mapping(address => Observation[]) private _userObs;
+    Observation[] private _totalObs;
+
+    mapping(address => bool) private _isDepositor;
     address[] private _depositors;
 
-    euint64 private _totalPrincipal;
-    euint64 private _prizeReserve;
-    euint64 private _prizePerDraw;
+    euint64 private _reserve;
     euint64 private _totalPrizesPaid;
+    mapping(address => euint64) private _pending;
+    mapping(address => euint64) private _winnings;
+    mapping(uint32 => mapping(address => bool)) public accrued;
+    mapping(uint32 => mapping(address => euint128)) private _cumAt;
 
-    bool public prizePerDrawConfigured;
-    bool public prizeReserveFunded;
-    uint256 public lastDrawAt;
-    uint256 public drawsCompleted;
+    uint32 public drawCount;
+    mapping(uint32 => Draw) private _draws;
+
+    uint64[TIERS] public tierPrize;
+    uint128[TIERS] public tierK;
+    uint64 public apexPrize;
+    bool public tiersConfigured;
+
+    IYieldSource public yieldSource;
+    uint256 public minDrawsBeforePublicReveal = 5;
     bytes32 public lastTotalPaidRevealHandle;
 
-    uint256 public depositWindowOpensAt;
-    uint256 public depositWindowClosesAt;
-
-    IERC4626 private _yieldVault;
-    uint256 public allocatedUnderlying;
-    bytes32 public pendingAllocateUnwrapId;
-    bytes32 public lastTotalPrincipalRevealHandle;
-    bytes32 public lastPublicTvlRevealHandle;
-    bytes32 public lastPrizeReserveRevealHandle;
-    uint16 public prizeShareBps = 8000;
-
-    /// @notice Encrypted random ticket for the open draw — never decrypted.
-    euint64 private _drawTicket;
-    euint64 private _committedPrize;
-    uint32 public settledCount;
-    bool public drawInFlight;
-
-    mapping(address => euint64) private _pendingWithdraw;
-    mapping(address => bytes32) public pendingWithdrawHandle;
-
     error InvalidAddress();
-    error InvalidDrawInterval();
-    error InvalidDepositWindow();
+    error InvalidPeriod();
     error InvalidReceiverData();
     error OnlyConfidentialToken(address caller);
-    error OnlyDepositor(address caller);
     error OnlyOwnerMayFundReserve(address sender);
     error DepositorLimitReached();
-    error PrizeNotConfigured();
-    error PrizeReserveNotFunded();
-    error DrawTooEarly(uint256 nextDrawAt);
-    error NoDepositors();
-    error DepositWindowClosed(uint256 closedAt);
-    error DepositWindowStillOpen(uint256 closesAt);
-    error DepositWindowNotOpen();
+    error NothingStaked();
+    error PreviousDrawUnresolved();
+    error TooSoon(uint40 openableAt);
+    error DrawNotOpen();
+    error DrawNotRevealed();
+    error PrizeTiersNotSet();
+    error BadTierShape();
+    error NotStale(uint40 cancellableAt);
+    error InvalidBatchSize();
     error RevealThresholdNotMet(uint256 completed, uint256 required);
     error RevealAlreadyRequested(bytes32 handle);
-    error YieldVaultNotSet();
-    error YieldVaultAlreadySet();
-    error YieldVaultAssetMismatch();
-    error AllocateInFlight();
-    error NoPendingAllocate();
-    error NoYieldToHarvest();
-    error InsufficientYieldLiquidity();
-    error InvalidRevealThreshold();
-    error InvalidPrizeShareBps();
-    error DrawAlreadyInFlight();
-    error NoDrawInFlight();
-    error BadSettleRange();
-    error NoPendingWithdraw();
-    error WithdrawPending();
+    error NoObservations();
+    error TimestampInFuture();
 
-    event WithdrawRevealRequested(address indexed account, bytes32 indexed amountHandle);
-    event WithdrawFinalized(address indexed account, uint256 clearAssets);
-    event SettleProgress(uint256 indexed drawId, uint32 from, uint32 to);
+    event Deposited(address indexed account, uint40 timestamp, uint256 observationIndex);
+    event Withdrawn(address indexed account, uint40 timestamp, uint256 observationIndex);
+    event PrizeReserveFunded(bytes32 indexed newReserveHandle);
+    event YieldSourceSet(address indexed source);
+    event Harvested(uint40 timestamp);
+    event TiersConfigured(uint64[TIERS] prizes, uint128[TIERS] k);
+    event DrawOpened(uint32 indexed drawId, uint40 periodStart, uint40 snapshotAt);
+    event DrawRevealed(uint32 indexed drawId, uint64 r, uint128 totalWeight);
+    event DrawCancelled(uint32 indexed drawId, uint40 at);
+    event Accrued(address indexed account, uint32 indexed drawId);
+    event PrizeClaimed(address indexed account, bytes32 indexed amountHandle);
+    event TotalPrizesPaidRevealRequested(uint32 indexed drawId, bytes32 indexed totalPaidHandle);
+    event MinDrawsBeforePublicRevealUpdated(uint256 value);
 
     constructor(
         address confidentialToken_,
         address underlyingToken_,
-        uint256 depositWindowDuration_,
-        uint256 drawInterval_,
+        uint40 minPeriod_,
         address initialOwner
     ) Ownable(initialOwner) {
-        if (confidentialToken_ == address(0) || underlyingToken_ == address(0) || initialOwner == address(0)) {
-            revert InvalidAddress();
-        }
-        if (depositWindowDuration_ == 0) revert InvalidDepositWindow();
-        if (drawInterval_ == 0) revert InvalidDrawInterval();
-
+        if (confidentialToken_ == address(0) || underlyingToken_ == address(0)) revert InvalidAddress();
+        if (minPeriod_ == 0) revert InvalidPeriod();
         _confidentialToken = IERC7984(confidentialToken_);
         _underlyingToken = underlyingToken_;
-        _depositWindowDuration = depositWindowDuration_;
-        _drawInterval = drawInterval_;
+        minPeriod = minPeriod_;
+        genesis = uint40(block.timestamp);
+
+        _reserve = FHE.asEuint64(0);
+        _totalPrizesPaid = FHE.asEuint64(0);
+        FHE.allowThis(_reserve);
+        FHE.allowThis(_totalPrizesPaid);
+        FHE.allow(_reserve, initialOwner);
     }
 
-    modifier onlyDepositor() {
-        if (!_isDepositor[msg.sender]) revert OnlyDepositor(msg.sender);
-        _;
-    }
+    // -------------------------------------------------------------------------
+    // views
+    // -------------------------------------------------------------------------
 
     function confidentialToken() external view returns (address) {
         return address(_confidentialToken);
@@ -152,30 +158,6 @@ contract ConfidentialPrizeVault is
 
     function underlyingToken() external view returns (address) {
         return _underlyingToken;
-    }
-
-    function drawInterval() external view returns (uint256) {
-        return _drawInterval;
-    }
-
-    function depositWindowDuration() external view returns (uint256) {
-        return _depositWindowDuration;
-    }
-
-    function depositsOpen() external view returns (bool) {
-        return depositWindowClosesAt == 0 || block.timestamp < depositWindowClosesAt;
-    }
-
-    function yieldVault() external view returns (address) {
-        return address(_yieldVault);
-    }
-
-    function nextDrawAt() public view returns (uint256) {
-        if (depositWindowClosesAt != 0) {
-            return depositWindowClosesAt + _drawInterval;
-        }
-        if (_depositors.length == 0 || lastDrawAt == 0) return 0;
-        return lastDrawAt + _drawInterval;
     }
 
     function depositorCount() external view returns (uint256) {
@@ -187,28 +169,48 @@ contract ConfidentialPrizeVault is
     }
 
     function confidentialBalanceOf(address account) external view returns (euint64) {
-        return _balances[account];
+        return _balanceOf(_userObs[account]);
     }
 
     function confidentialClaimableOf(address account) external view returns (euint64) {
-        return _claimable[account];
+        return _pending[account];
     }
 
-    function confidentialPrizeReserve() external view override(IConfidentialPrizeVault, IPrizeReserve) returns (euint64) {
-        return _prizeReserve;
+    function confidentialWinningsOf(address account) external view returns (euint64) {
+        return _winnings[account];
     }
 
-    function confidentialPrizePerDraw() external view override(IConfidentialPrizeVault, IPrizeReserve) returns (euint64) {
-        return _prizePerDraw;
-    }
-
-    function confidentialTotalPrincipal() external view returns (euint64) {
-        return _totalPrincipal;
+    function confidentialPrizeReserve() external view returns (euint64) {
+        return _reserve;
     }
 
     function confidentialTotalPrizesPaid() external view returns (euint64) {
         return _totalPrizesPaid;
     }
+
+    function observationCount(address account) external view returns (uint256) {
+        return _userObs[account].length;
+    }
+
+    function drawAt(uint32 drawId) external view returns (Draw memory) {
+        return _draws[drawId];
+    }
+
+    function nextOpenableAt() public view returns (uint40) {
+        if (drawCount == 0) return genesis + minPeriod;
+        Draw storage last = _draws[drawCount];
+        if (last.status == DrawStatus.Cancelled) {
+            return last.periodStart + minPeriod;
+        }
+        if (last.status == DrawStatus.Revealed) {
+            return last.snapshotAt + minPeriod;
+        }
+        return type(uint40).max;
+    }
+
+    // -------------------------------------------------------------------------
+    // deposit / withdraw (ERC-7984 receiver + explicit withdraw)
+    // -------------------------------------------------------------------------
 
     function onConfidentialTransferReceived(
         address,
@@ -233,119 +235,43 @@ contract ConfidentialPrizeVault is
         return accepted;
     }
 
-    function setPrizePerDraw(
-        externalEuint64 encryptedAmount,
-        bytes calldata inputProof
-    ) external override(IConfidentialPrizeVault, IPrizeReserve) onlyOwner {
-        _prizePerDraw = FHE.fromExternal(encryptedAmount, inputProof);
-        FHE.allowThis(_prizePerDraw);
-        FHE.allow(_prizePerDraw, owner());
-        prizePerDrawConfigured = true;
-        emit PrizePerDrawConfigured(euint64.unwrap(_prizePerDraw));
-    }
-
-    /// @notice Withdraw principal. Idle cUSDC pays in one step. If capital is allocated in
-    ///         the yield venue, stages an encrypted exit and requires `finalizeWithdraw` so
-    ///         only that clear slice is redeemed (not the whole position).
     function withdraw(
         externalEuint64 encryptedAmount,
         bytes calldata inputProof
-    ) external onlyDepositor nonReentrant returns (euint64 transferred) {
-        if (pendingWithdrawHandle[msg.sender] != bytes32(0)) revert WithdrawPending();
+    ) external nonReentrant returns (euint64 sent) {
+        euint64 amount = FHE.fromExternal(encryptedAmount, inputProof);
+        euint64 balance = _balanceOf(_userObs[msg.sender]);
 
-        euint64 requested = FHE.fromExternal(encryptedAmount, inputProof);
-        euint64 current = _balances[msg.sender];
-        ebool withinBalance = FHE.le(requested, current);
-        euint64 amount = FHE.select(withinBalance, requested, FHE.asEuint64(0));
+        ebool within = FHE.le(amount, balance);
+        euint64 request = FHE.select(within, amount, FHE.asEuint64(0));
+        euint64 decreased = FHE.select(within, FHE.sub(balance, amount), balance);
 
-        if (allocatedUnderlying == 0 || address(_yieldVault) == address(0)) {
-            FHE.allowTransient(amount, address(_confidentialToken));
-            transferred = _confidentialToken.confidentialTransfer(msg.sender, amount);
-            _balances[msg.sender] = FHE.sub(current, transferred);
-            _totalPrincipal = FHE.sub(_totalPrincipal, transferred);
-            _grantBalancePermissions(msg.sender);
-            FHE.allowThis(_totalPrincipal);
-            emit WithdrawalRequested(msg.sender, euint64.unwrap(transferred));
-            return transferred;
+        if (address(yieldSource) != address(0)) {
+            FHE.allowTransient(request, address(yieldSource));
+            sent = yieldSource.redeem(request, msg.sender);
+        } else {
+            FHE.allowTransient(request, address(_confidentialToken));
+            sent = _confidentialToken.confidentialTransfer(msg.sender, request);
         }
 
-        _pendingWithdraw[msg.sender] = amount;
-        FHE.allowThis(amount);
-        FHE.allow(amount, msg.sender);
-        FHE.makePubliclyDecryptable(amount);
-        bytes32 handle = euint64.unwrap(amount);
-        pendingWithdrawHandle[msg.sender] = handle;
-        transferred = amount;
-        emit WithdrawRevealRequested(msg.sender, handle);
-        emit WithdrawalRequested(msg.sender, handle);
+        euint64 refund = FHE.sub(request, sent);
+        euint64 newUser = FHE.add(decreased, refund);
+        euint64 newTotal = FHE.sub(_balanceOf(_totalObs), sent);
+
+        _push(_userObs[msg.sender], newUser, msg.sender);
+        _push(_totalObs, newTotal, address(0));
+
+        emit Withdrawn(msg.sender, uint40(block.timestamp), _userObs[msg.sender].length - 1);
     }
 
-    function finalizeWithdraw(uint64 clearAssets, bytes calldata /* decryptionProof */) external onlyDepositor nonReentrant {
-        if (pendingWithdrawHandle[msg.sender] == bytes32(0)) revert NoPendingWithdraw();
-
-        if (clearAssets == 0) {
-            pendingWithdrawHandle[msg.sender] = bytes32(0);
-            _pendingWithdraw[msg.sender] = FHE.asEuint64(0);
-            return;
-        }
-
-        _redeemFromYield(uint256(clearAssets));
-
-        euint64 amount = _pendingWithdraw[msg.sender];
-        euint64 current = _balances[msg.sender];
-        FHE.allowTransient(amount, address(_confidentialToken));
-        euint64 sent = _confidentialToken.confidentialTransfer(msg.sender, amount);
-
-        _balances[msg.sender] = FHE.sub(current, sent);
-        _totalPrincipal = FHE.sub(_totalPrincipal, sent);
-        _grantBalancePermissions(msg.sender);
-        FHE.allowThis(_totalPrincipal);
-
-        pendingWithdrawHandle[msg.sender] = bytes32(0);
-        _pendingWithdraw[msg.sender] = FHE.asEuint64(0);
-        emit WithdrawFinalized(msg.sender, clearAssets);
-    }
-
-    /// @notice Starts an encrypted slot draw (or settles the next batch). Draws one
-    ///         `FHE.randEuint64` ticket, then independently checks each depositor's encrypted
-    ///         time-in-bus weight. Call again / use `settle` until `settledCount` covers the bus.
-    function draw() external {
-        _requireDrawReady();
-        if (!drawInFlight) {
-            _beginDraw();
-            // Compact buses finish inside `_beginDraw` (no in-flight settle).
-            if (!drawInFlight) return;
-        }
-        uint32 from = settledCount;
-        uint32 to = uint32(_depositors.length);
-        if (to > from + uint32(MAX_SETTLE_PER_TX)) {
-            to = from + uint32(MAX_SETTLE_PER_TX);
-        }
-        _settle(from, to);
-        if (settledCount == uint32(_depositors.length)) {
-            _completeDraw();
-        }
-    }
-
-    /// @notice Permissionless settle batch after `draw()` opened the round.
-    function settle(uint32 from, uint32 to) external {
-        if (!drawInFlight) revert NoDrawInFlight();
-        if (from != settledCount || to <= from || to > _depositors.length) revert BadSettleRange();
-        if (to - from > MAX_SETTLE_PER_TX) revert BadSettleRange();
-        _settle(from, to);
-        if (settledCount == uint32(_depositors.length)) {
-            _completeDraw();
-        }
-    }
-
-    function claim() external onlyDepositor nonReentrant returns (euint64 transferred) {
-        euint64 amount = _claimable[msg.sender];
+    function claim() external nonReentrant returns (euint64 transferred) {
+        euint64 amount = _pending[msg.sender];
         FHE.allowTransient(amount, address(_confidentialToken));
         transferred = _confidentialToken.confidentialTransfer(msg.sender, amount);
 
-        _claimable[msg.sender] = FHE.sub(amount, transferred);
-        FHE.allowThis(_claimable[msg.sender]);
-        FHE.allow(_claimable[msg.sender], msg.sender);
+        _pending[msg.sender] = FHE.sub(amount, transferred);
+        FHE.allowThis(_pending[msg.sender]);
+        FHE.allow(_pending[msg.sender], msg.sender);
 
         _totalPrizesPaid = FHE.add(_totalPrizesPaid, transferred);
         FHE.allowThis(_totalPrizesPaid);
@@ -353,359 +279,326 @@ contract ConfidentialPrizeVault is
         emit PrizeClaimed(msg.sender, euint64.unwrap(transferred));
     }
 
-    function requestTotalPrizesPaidReveal() external onlyOwner returns (bytes32 handle) {
-        if (drawsCompleted < minDrawsBeforePublicReveal) {
-            revert RevealThresholdNotMet(drawsCompleted, minDrawsBeforePublicReveal);
+    // -------------------------------------------------------------------------
+    // admin / yield
+    // -------------------------------------------------------------------------
+
+    function setYieldSource(IYieldSource source) external onlyOwner {
+        yieldSource = source;
+        if (address(source) != address(0)) {
+            _confidentialToken.setOperator(address(source), type(uint48).max);
         }
-
-        handle = euint64.unwrap(_totalPrizesPaid);
-        if (handle == lastTotalPaidRevealHandle) revert RevealAlreadyRequested(handle);
-
-        FHE.makePubliclyDecryptable(_totalPrizesPaid);
-        lastTotalPaidRevealHandle = handle;
-        emit TotalPrizesPaidRevealRequested(drawsCompleted, handle);
+        emit YieldSourceSet(address(source));
     }
 
-    function setPrizeShareBps(uint16 bps) external onlyOwner {
-        if (bps == 0 || bps > 10_000) revert InvalidPrizeShareBps();
-        prizeShareBps = bps;
-        emit PrizeShareBpsUpdated(bps);
+    function harvest() external {
+        if (address(yieldSource) == address(0)) return;
+        euint64 got = yieldSource.harvest(address(this));
+        _reserve = FHE.add(_reserve, got);
+        FHE.allowThis(_reserve);
+        FHE.allow(_reserve, owner());
+        emit Harvested(uint40(block.timestamp));
+    }
+
+    /// @notice Configures Apex / Pulse / Ripple prizes and odds multipliers.
+    /// @dev `k[TIER_RIPPLE]` must be 1. Higher `k` = rarer tier. Prizes must strictly decrease.
+    function setTiers(uint64[TIERS] calldata prizes, uint128[TIERS] calldata k) external onlyOwner {
+        if (k[TIER_RIPPLE] != 1) revert BadTierShape();
+        for (uint8 t = 0; t + 1 < TIERS; ++t) {
+            if (k[t] <= k[t + 1]) revert BadTierShape();
+            if (prizes[t] <= prizes[t + 1]) revert BadTierShape();
+        }
+        for (uint8 t = 0; t < TIERS; ++t) {
+            tierPrize[t] = prizes[t];
+            tierK[t] = k[t];
+        }
+        apexPrize = prizes[TIER_APEX];
+        tiersConfigured = true;
+        emit TiersConfigured(prizes, k);
     }
 
     function setMinDrawsBeforePublicReveal(uint256 value) external onlyOwner {
-        if (value == 0) revert InvalidRevealThreshold();
         minDrawsBeforePublicReveal = value;
         emit MinDrawsBeforePublicRevealUpdated(value);
     }
 
-    function setMinDepositsBeforePublicTvlReveal(uint256 value) external onlyOwner {
-        if (value == 0) revert InvalidRevealThreshold();
-        minDepositsBeforePublicTvlReveal = value;
-        emit MinDepositsBeforePublicTvlRevealUpdated(value);
+    function requestTotalPrizesPaidReveal() external onlyOwner returns (bytes32 handle) {
+        if (drawCount < minDrawsBeforePublicReveal) {
+            revert RevealThresholdNotMet(drawCount, minDrawsBeforePublicReveal);
+        }
+        handle = euint64.unwrap(_totalPrizesPaid);
+        if (handle == lastTotalPaidRevealHandle) revert RevealAlreadyRequested(handle);
+        FHE.makePubliclyDecryptable(_totalPrizesPaid);
+        lastTotalPaidRevealHandle = handle;
+        emit TotalPrizesPaidRevealRequested(drawCount, handle);
     }
 
-    function setYieldVault(address yieldVault_) external onlyOwner {
-        if (yieldVault_ == address(0)) revert InvalidAddress();
-        if (address(_yieldVault) != address(0)) revert YieldVaultAlreadySet();
-        if (IERC4626(yieldVault_).asset() != _underlyingToken) revert YieldVaultAssetMismatch();
-        _yieldVault = IERC4626(yieldVault_);
-        emit YieldVaultSet(yieldVault_);
-    }
+    // -------------------------------------------------------------------------
+    // draws
+    // -------------------------------------------------------------------------
 
-    function requestTotalPrincipalReveal() external onlyOwner returns (bytes32 handle) {
-        handle = euint64.unwrap(_totalPrincipal);
-        if (handle == lastTotalPrincipalRevealHandle) revert RevealAlreadyRequested(handle);
-        FHE.makePubliclyDecryptable(_totalPrincipal);
-        lastTotalPrincipalRevealHandle = handle;
-        emit TotalPrincipalRevealRequested(handle);
-    }
+    /// @notice Freezes the current TWAB window and draws encrypted randomness in one tx.
+    function openDraw() external returns (uint32 drawId) {
+        if (
+            drawCount != 0 &&
+            _draws[drawCount].status != DrawStatus.Revealed &&
+            _draws[drawCount].status != DrawStatus.Cancelled
+        ) {
+            revert PreviousDrawUnresolved();
+        }
+        if (_totalObs.length == 0) revert NothingStaked();
 
-    function requestPublicTvlReveal() external onlyOwner returns (bytes32 handle) {
-        uint256 count = _depositors.length;
-        if (count < minDepositsBeforePublicTvlReveal) {
-            revert RevealThresholdNotMet(count, minDepositsBeforePublicTvlReveal);
+        uint40 previous;
+        if (drawCount == 0) {
+            previous = genesis;
+        } else if (_draws[drawCount].status == DrawStatus.Cancelled) {
+            previous = _draws[drawCount].periodStart;
+        } else {
+            previous = _draws[drawCount].snapshotAt;
+        }
+        if (block.timestamp < uint256(previous) + minPeriod) {
+            revert TooSoon(previous + minPeriod);
         }
 
-        handle = euint64.unwrap(_totalPrincipal);
-        if (handle == lastPublicTvlRevealHandle) revert RevealAlreadyRequested(handle);
+        uint40 periodStart = previous;
+        uint40 snapshotAt = uint40(block.timestamp);
 
-        FHE.makePubliclyDecryptable(_totalPrincipal);
-        lastPublicTvlRevealHandle = handle;
-        emit PublicTvlRevealRequested(count, handle);
+        euint128 total = FHE.sub(
+            _cumulativeAt(_totalObs, snapshotAt),
+            _cumulativeAt(_totalObs, periodStart)
+        );
+        euint64 r = FHE.randEuint64();
+
+        FHE.allowThis(total);
+        FHE.allowThis(r);
+        FHE.makePubliclyDecryptable(total);
+        FHE.makePubliclyDecryptable(r);
+
+        drawId = ++drawCount;
+        _draws[drawId] = Draw({
+            periodStart: periodStart,
+            snapshotAt: snapshotAt,
+            status: DrawStatus.Open,
+            encR: r,
+            encTotalWeight: total,
+            r: 0,
+            totalWeight: 0
+        });
+
+        emit DrawOpened(drawId, periodStart, snapshotAt);
     }
 
-    function requestPrizeReserveReveal() external onlyOwner returns (bytes32 handle) {
-        handle = euint64.unwrap(_prizeReserve);
-        if (handle == lastPrizeReserveRevealHandle) revert RevealAlreadyRequested(handle);
-        FHE.makePubliclyDecryptable(_prizeReserve);
-        lastPrizeReserveRevealHandle = handle;
-        emit PrizeReserveRevealRequested(handle);
-    }
-
-    function bootstrapAllocate(uint256 underlyingAmount) external onlyOwner nonReentrant {
-        _requireDepositWindowClosed();
-        if (address(_yieldVault) == address(0)) revert YieldVaultNotSet();
-        if (underlyingAmount == 0) revert InsufficientYieldLiquidity();
-
-        IERC20(_underlyingToken).safeTransferFrom(msg.sender, address(this), underlyingAmount);
-        IERC20(_underlyingToken).forceApprove(address(_yieldVault), underlyingAmount);
-        _yieldVault.deposit(underlyingAmount, address(this));
-        allocatedUnderlying += underlyingAmount;
-
-        emit YieldAllocated(underlyingAmount, allocatedUnderlying);
-    }
-
-    function requestAllocate(
-        externalEuint64 encryptedAmount,
-        bytes calldata inputProof
-    ) external onlyOwner returns (bytes32 unwrapRequestId) {
-        _requireDepositWindowClosed();
-        if (address(_yieldVault) == address(0)) revert YieldVaultNotSet();
-        if (pendingAllocateUnwrapId != bytes32(0)) revert AllocateInFlight();
-
-        IERC7984ERC20Wrapper wrapper = IERC7984ERC20Wrapper(address(_confidentialToken));
-        unwrapRequestId = wrapper.unwrap(address(this), address(this), encryptedAmount, inputProof);
-        pendingAllocateUnwrapId = unwrapRequestId;
-        emit AllocateRequested(unwrapRequestId);
-    }
-
-    function finalizeAllocate(
-        uint64 unwrapAmountCleartext,
+    /// @notice Publishes R and total weight after KMS public-decrypt signatures.
+    function revealDraw(
+        uint32 drawId,
+        bytes calldata cleartexts,
         bytes calldata decryptionProof
-    ) external onlyOwner nonReentrant returns (uint256 underlyingAmount) {
-        if (pendingAllocateUnwrapId == bytes32(0)) revert NoPendingAllocate();
-        if (address(_yieldVault) == address(0)) revert YieldVaultNotSet();
+    ) external {
+        Draw storage d = _draws[drawId];
+        if (d.status != DrawStatus.Open) revert DrawNotOpen();
 
-        bytes32 requestId = pendingAllocateUnwrapId;
-        pendingAllocateUnwrapId = bytes32(0);
+        bytes32[] memory handles = new bytes32[](2);
+        handles[0] = euint64.unwrap(d.encR);
+        handles[1] = euint128.unwrap(d.encTotalWeight);
+        FHE.checkSignatures(handles, cleartexts, decryptionProof);
 
-        IERC7984ERC20Wrapper wrapper = IERC7984ERC20Wrapper(address(_confidentialToken));
-        wrapper.finalizeUnwrap(requestId, unwrapAmountCleartext, decryptionProof);
-
-        underlyingAmount = uint256(unwrapAmountCleartext) * wrapper.rate();
-        IERC20 underlying = IERC20(_underlyingToken);
-        underlying.forceApprove(address(_yieldVault), underlyingAmount);
-        _yieldVault.deposit(underlyingAmount, address(this));
-        allocatedUnderlying += underlyingAmount;
-
-        emit YieldAllocated(underlyingAmount, allocatedUnderlying);
+        (uint256 r, uint256 total) = abi.decode(cleartexts, (uint256, uint256));
+        _applyReveal(drawId, uint64(r), uint128(total));
     }
 
-    function harvestClear() external onlyOwner nonReentrant returns (uint256 yieldUnderlying) {
-        if (address(_yieldVault) == address(0)) revert YieldVaultNotSet();
-
-        uint256 shares = _yieldVault.balanceOf(address(this));
-        uint256 assets = _yieldVault.convertToAssets(shares);
-        if (assets <= allocatedUnderlying) revert NoYieldToHarvest();
-
-        yieldUnderlying = assets - allocatedUnderlying;
-        _yieldVault.withdraw(yieldUnderlying, msg.sender, address(this));
-
-        emit YieldHarvested(yieldUnderlying);
+    /// @notice Abandons a stale open draw so the pool cannot brick.
+    function cancelDraw(uint32 drawId) external {
+        Draw storage d = _draws[drawId];
+        if (d.status != DrawStatus.Open) revert DrawNotOpen();
+        uint40 at = d.snapshotAt + CANCEL_AFTER;
+        if (block.timestamp < at) revert NotStale(at);
+        d.status = DrawStatus.Cancelled;
+        emit DrawCancelled(drawId, uint40(block.timestamp));
     }
 
-    function redeemFromYield(uint256 underlyingAmount) external onlyOwner nonReentrant {
-        _redeemFromYield(underlyingAmount);
+    /// @notice Plaintext per-user threshold for a ConfiPool tier (Apex / Pulse / Ripple).
+    function thresholdFor(uint32 drawId, address user, uint8 tier) public view returns (uint128) {
+        Draw storage d = _draws[drawId];
+        if (d.status != DrawStatus.Revealed) revert DrawNotRevealed();
+        if (tier >= TIERS) revert BadTierShape();
+        uint256 upper = uint256(d.totalWeight) * uint256(tierK[tier]);
+        return uint128(_uniform(uint256(keccak256(abi.encode(d.r, drawId, user, tier))), upper));
     }
 
-    function _requireDrawReady() private view {
-        if (!prizePerDrawConfigured) revert PrizeNotConfigured();
-        if (!prizeReserveFunded) revert PrizeReserveNotFunded();
-        if (_depositors.length == 0) revert NoDepositors();
+    /// @notice Awards Apex / Pulse / Ripple credit for one participant. Permissionless.
+    function accrue(address user, uint32 drawId) public {
+        Draw storage d = _draws[drawId];
+        if (d.status != DrawStatus.Revealed) revert DrawNotRevealed();
+        if (!tiersConfigured || apexPrize == 0) revert PrizeTiersNotSet();
+        if (accrued[drawId][user]) return;
+        accrued[drawId][user] = true;
 
-        if (depositWindowClosesAt != 0) {
-            if (block.timestamp < depositWindowClosesAt) {
-                revert DepositWindowStillOpen(depositWindowClosesAt);
+        euint128 weight = FHE.sub(
+            _snapshotCumulative(user, drawId, d.snapshotAt),
+            _windowStart(user, drawId, d)
+        );
+
+        // Evaluate Ripple → Pulse → Apex so the rarest win overrides.
+        euint64 credit = FHE.asEuint64(0);
+        for (uint8 i = TIERS; i > 0; --i) {
+            uint8 t = i - 1;
+            ebool won = FHE.gt(weight, thresholdFor(drawId, user, t));
+            credit = FHE.select(won, FHE.asEuint64(tierPrize[t]), credit);
+        }
+
+        ebool funded = FHE.ge(_reserve, credit);
+        euint64 paid = FHE.select(funded, credit, FHE.asEuint64(0));
+        _reserve = FHE.select(funded, FHE.sub(_reserve, credit), _reserve);
+        FHE.allowThis(_reserve);
+        FHE.allow(_reserve, owner());
+
+        _pending[user] = FHE.add(_pending[user], paid);
+        _winnings[user] = FHE.add(_winnings[user], paid);
+        FHE.allowThis(_pending[user]);
+        FHE.allow(_pending[user], user);
+        FHE.allowThis(_winnings[user]);
+        FHE.allow(_winnings[user], user);
+
+        emit Accrued(user, drawId);
+    }
+
+    /// @notice Batched accrual with deterministic address order (not caller-chosen).
+    function accrueMany(address[] calldata users, uint32 drawId) external {
+        uint256 n = users.length;
+        if (n == 0 || n > MAX_ACCRUE_BATCH) revert InvalidBatchSize();
+
+        address[] memory ordered = new address[](n);
+        for (uint256 i = 0; i < n; ++i) ordered[i] = users[i];
+        for (uint256 i = 1; i < n; ++i) {
+            address key = ordered[i];
+            bytes32 keyHash = keccak256(abi.encode(drawId, key));
+            uint256 j = i;
+            while (j > 0 && uint256(keccak256(abi.encode(drawId, ordered[j - 1]))) > uint256(keyHash)) {
+                ordered[j] = ordered[j - 1];
+                unchecked {
+                    --j;
+                }
             }
-        } else if (lastDrawAt == 0) {
-            revert DepositWindowNotOpen();
-        } else if (msg.sender != owner() && !drawInFlight) {
-            revert OwnableUnauthorizedAccount(msg.sender);
+            ordered[j] = key;
         }
 
-        if (!drawInFlight) {
-            uint256 dueAt = nextDrawAt();
-            if (dueAt == 0 || block.timestamp < dueAt) revert DrawTooEarly(dueAt);
-        }
-    }
-
-    function _beginDraw() private {
-        if (drawInFlight) revert DrawAlreadyInFlight();
-
-        ebool hasPrincipal = FHE.gt(_totalPrincipal, 0);
-        ebool reserveIsEnough = FHE.ge(_prizeReserve, _prizePerDraw);
-        ebool canAward = FHE.and(hasPrincipal, reserveIsEnough);
-        _committedPrize = FHE.select(canAward, _prizePerDraw, FHE.asEuint64(0));
-        _prizeReserve = FHE.sub(_prizeReserve, _committedPrize);
-        FHE.allowThis(_prizeReserve);
-        FHE.allow(_prizeReserve, owner());
-        FHE.allowThis(_committedPrize);
-
-        uint32 n = uint32(_depositors.length);
-        if (n <= uint32(MAX_SETTLE_PER_TX)) {
-            // Compact buses: one-shot cumulative walk over time-in-bus weights (always one winner).
-            _drawCompactBus();
-            _completeDraw();
-            return;
-        }
-
-        // Larger buses: encrypted slot ticket + independent per-depositor settle batches.
-        _drawTicket = EncryptedSlotDraw.drawTicket(n, SLOT_WIDTH);
-        settledCount = 0;
-        drawInFlight = true;
-    }
-
-    /// @dev Original ConfiPool selection: `FHE.randEuint64` scaled by Σ weights, then cumulative
-    ///      encrypted ranges. Used when the whole bus fits one transaction.
-    function _drawCompactBus() private {
-        euint64 weightSum = FHE.asEuint64(0);
-        uint256 n = _depositors.length;
         for (uint256 i = 0; i < n; ++i) {
-            weightSum = FHE.add(weightSum, _timeWeightedBalance(_depositors[i]));
-        }
-
-        euint64 randomWord = FHE.randEuint64();
-        euint128 scaledWide = FHE.mul(FHE.asEuint128(randomWord), FHE.asEuint128(weightSum));
-        euint64 ticket = FHE.asEuint64(FHE.shr(scaledWide, 64));
-
-        euint64 cumulative = FHE.asEuint64(0);
-        ebool selected = FHE.asEbool(false);
-        for (uint256 i = 0; i < n; ++i) {
-            address account = _depositors[i];
-            cumulative = FHE.add(cumulative, _timeWeightedBalance(account));
-
-            ebool ticketBeforeEnd = FHE.lt(ticket, cumulative);
-            ebool winner = FHE.and(FHE.not(selected), ticketBeforeEnd);
-            euint64 payout = FHE.select(winner, _committedPrize, FHE.asEuint64(0));
-
-            _claimable[account] = FHE.add(_claimable[account], payout);
-            FHE.allowThis(_claimable[account]);
-            FHE.allow(_claimable[account], account);
-            selected = FHE.or(selected, winner);
+            accrue(ordered[i], drawId);
         }
     }
 
-    function _settle(uint32 from, uint32 to) private {
-        uint64 openTs = uint64(depositWindowOpensAt);
-        uint64 endTs = depositWindowClosesAt != 0
-            ? uint64(depositWindowClosesAt)
-            : uint64(lastDrawAt);
-        if (endTs == 0) endTs = uint64(block.timestamp);
-        if (openTs == 0) openTs = endTs > 0 ? endTs - 1 : uint64(block.timestamp);
-        uint64 window = endTs > openTs ? endTs - openTs : 1;
+    // -------------------------------------------------------------------------
+    // internal: reveal hook (overridable for local Hardhat harness)
+    // -------------------------------------------------------------------------
 
-        euint64 encPrize = _committedPrize;
-        FHE.allowThis(encPrize);
-
-        for (uint32 i = from; i < to; ++i) {
-            address account = _depositors[i];
-            uint64 joined = _joinedAt[account];
-            if (joined == 0 || joined < openTs) joined = openTs;
-            if (joined > endTs) joined = endTs;
-            uint64 held = endTs - joined;
-
-            euint64 weight = FHE.div(FHE.mul(_balances[account], held), window);
-            weight = FHE.min(weight, SLOT_WIDTH);
-
-            ebool won = EncryptedSlotDraw.isWinner(_drawTicket, i, SLOT_WIDTH, weight);
-            euint64 payout = EncryptedSlotDraw.payoutIfWinner(won, encPrize);
-
-            _claimable[account] = FHE.add(_claimable[account], payout);
-            FHE.allowThis(_claimable[account]);
-            FHE.allow(_claimable[account], account);
-        }
-
-        settledCount = to;
-        emit SettleProgress(drawsCompleted + 1, from, to);
+    function _applyReveal(uint32 drawId, uint64 r, uint128 total) internal virtual {
+        Draw storage d = _draws[drawId];
+        d.r = r;
+        d.totalWeight = total;
+        d.status = DrawStatus.Revealed;
+        emit DrawRevealed(drawId, r, total);
     }
 
-    function _timeWeightedBalance(address account) private returns (euint64 weight) {
-        uint64 openTs = uint64(depositWindowOpensAt);
-        uint64 endTs = depositWindowClosesAt != 0
-            ? uint64(depositWindowClosesAt)
-            : (lastDrawAt != 0 ? uint64(lastDrawAt) : uint64(block.timestamp));
-        if (openTs == 0) {
-            openTs = endTs > 0 ? endTs - 1 : uint64(block.timestamp);
-        }
-        uint64 window = endTs > openTs ? endTs - openTs : 1;
-
-        uint64 joined = _joinedAt[account];
-        if (joined == 0 || joined < openTs) joined = openTs;
-        if (joined > endTs) joined = endTs;
-        uint64 held = endTs - joined;
-
-        weight = FHE.div(FHE.mul(_balances[account], held), window);
-    }
-
-    function _completeDraw() private {
-        unchecked {
-            ++drawsCompleted;
-        }
-        lastDrawAt = block.timestamp;
-        drawInFlight = false;
-        settledCount = 0;
-
-        if (depositWindowClosesAt != 0 || depositWindowOpensAt != 0) {
-            depositWindowOpensAt = 0;
-            depositWindowClosesAt = 0;
-            uint256 n = _depositors.length;
-            for (uint256 i = 0; i < n; ++i) {
-                _joinedAt[_depositors[i]] = 0;
-            }
-            emit DepositWindowReset(drawsCompleted);
-        }
-        emit DrawCompleted(drawsCompleted, euint64.unwrap(_committedPrize));
-    }
-
-    function _redeemFromYield(uint256 underlyingAmount) private {
-        if (address(_yieldVault) == address(0)) revert YieldVaultNotSet();
-        if (underlyingAmount == 0) revert InsufficientYieldLiquidity();
-
-        uint256 amount = underlyingAmount;
-        if (amount > allocatedUnderlying) amount = allocatedUnderlying;
-
-        uint256 maxOut = _yieldVault.maxWithdraw(address(this));
-        if (amount > maxOut) amount = maxOut;
-        if (amount == 0) revert InsufficientYieldLiquidity();
-
-        _yieldVault.withdraw(amount, address(this), address(this));
-        allocatedUnderlying -= amount;
-
-        if (_yieldVault.maxWithdraw(address(this)) == 0) {
-            allocatedUnderlying = 0;
-        }
-
-        IERC7984ERC20Wrapper wrapper = IERC7984ERC20Wrapper(address(_confidentialToken));
-        IERC20(_underlyingToken).forceApprove(address(wrapper), amount);
-        wrapper.wrap(address(this), amount);
-
-        emit YieldRedeemed(amount, allocatedUnderlying);
-    }
+    // -------------------------------------------------------------------------
+    // internal: TWAB record
+    // -------------------------------------------------------------------------
 
     function _recordDeposit(address account, euint64 amount) private {
-        if (drawInFlight) revert DrawAlreadyInFlight();
-        if (depositWindowClosesAt != 0 && block.timestamp >= depositWindowClosesAt) {
-            revert DepositWindowClosed(depositWindowClosesAt);
-        }
-        if (depositWindowClosesAt == 0) {
-            depositWindowOpensAt = block.timestamp;
-            depositWindowClosesAt = block.timestamp + _depositWindowDuration;
-            emit DepositWindowOpened(depositWindowOpensAt, depositWindowClosesAt);
-        }
-
         if (!_isDepositor[account]) {
             if (_depositors.length >= MAX_DEPOSITORS) revert DepositorLimitReached();
             _isDepositor[account] = true;
             _depositors.push(account);
-            _joinedAt[account] = uint64(block.timestamp);
-        } else if (_joinedAt[account] == 0) {
-            _joinedAt[account] = uint64(block.timestamp);
         }
 
-        _balances[account] = FHE.add(_balances[account], amount);
-        _totalPrincipal = FHE.add(_totalPrincipal, amount);
-        _grantBalancePermissions(account);
-        FHE.allowThis(_totalPrincipal);
-        emit DepositRecorded(account, euint64.unwrap(_balances[account]));
-    }
-
-    function _requireDepositWindowClosed() private view {
-        if (depositWindowClosesAt == 0) revert DepositWindowNotOpen();
-        if (block.timestamp < depositWindowClosesAt) {
-            revert DepositWindowStillOpen(depositWindowClosesAt);
+        if (address(yieldSource) != address(0)) {
+            FHE.allowTransient(amount, address(yieldSource));
+            amount = yieldSource.supply(amount);
         }
+
+        euint64 newUser = FHE.add(_balanceOf(_userObs[account]), amount);
+        euint64 newTotal = FHE.add(_balanceOf(_totalObs), amount);
+        _push(_userObs[account], newUser, account);
+        _push(_totalObs, newTotal, address(0));
+
+        emit Deposited(account, uint40(block.timestamp), _userObs[account].length - 1);
     }
 
     function _recordPrizeReserve(euint64 amount) private {
-        _prizeReserve = FHE.add(_prizeReserve, amount);
-        FHE.allowThis(_prizeReserve);
-        FHE.allow(_prizeReserve, owner());
-        prizeReserveFunded = true;
-        emit PrizeReserveFunded(euint64.unwrap(_prizeReserve));
+        _reserve = FHE.add(_reserve, amount);
+        FHE.allowThis(_reserve);
+        FHE.allow(_reserve, owner());
+        emit PrizeReserveFunded(euint64.unwrap(_reserve));
     }
 
-    function _grantBalancePermissions(address account) private {
-        FHE.allowThis(_balances[account]);
-        FHE.allow(_balances[account], account);
+    function _push(Observation[] storage obs, euint64 newBalance, address reader) private {
+        uint40 nowTs = uint40(block.timestamp);
+        euint128 cumulative;
+
+        if (obs.length == 0) {
+            cumulative = FHE.asEuint128(0);
+        } else {
+            Observation storage last = obs[obs.length - 1];
+            uint128 dt = uint128(nowTs - last.timestamp);
+            cumulative = FHE.add(last.cumulative, FHE.mul(FHE.asEuint128(last.balance), dt));
+        }
+
+        FHE.allowThis(newBalance);
+        FHE.allowThis(cumulative);
+        if (reader != address(0)) {
+            FHE.allow(newBalance, reader);
+            FHE.allow(cumulative, reader);
+        }
+
+        obs.push(Observation({timestamp: nowTs, balance: newBalance, cumulative: cumulative}));
+    }
+
+    function _balanceOf(Observation[] storage obs) private view returns (euint64) {
+        if (obs.length == 0) return euint64.wrap(0);
+        return obs[obs.length - 1].balance;
+    }
+
+    function _indexAt(Observation[] storage obs, uint40 target) private view returns (uint256) {
+        uint256 len = obs.length;
+        if (len == 0 || obs[0].timestamp > target) revert NoObservations();
+        uint256 lo = 0;
+        uint256 hi = len - 1;
+        while (lo < hi) {
+            uint256 mid = (lo + hi + 1) / 2;
+            if (obs[mid].timestamp <= target) lo = mid;
+            else hi = mid - 1;
+        }
+        return lo;
+    }
+
+    function _cumulativeAt(Observation[] storage obs, uint40 target) private returns (euint128) {
+        if (obs.length == 0 || obs[0].timestamp > target) return FHE.asEuint128(0);
+        Observation storage o = obs[_indexAt(obs, target)];
+        return FHE.add(o.cumulative, FHE.mul(FHE.asEuint128(o.balance), uint128(target - o.timestamp)));
+    }
+
+    function _snapshotCumulative(address user, uint32 drawId, uint40 snapshotAt) private returns (euint128) {
+        euint128 cached = _cumAt[drawId][user];
+        if (FHE.isInitialized(cached)) return cached;
+        euint128 value = _cumulativeAt(_userObs[user], snapshotAt);
+        _cumAt[drawId][user] = value;
+        FHE.allowThis(value);
+        return value;
+    }
+
+    function _windowStart(address user, uint32 drawId, Draw storage d) private returns (euint128) {
+        if (drawId > 1 && _draws[drawId - 1].status == DrawStatus.Revealed) {
+            return _snapshotCumulative(user, drawId - 1, _draws[drawId - 1].snapshotAt);
+        }
+        return _cumulativeAt(_userObs[user], d.periodStart);
+    }
+
+    function _uniform(uint256 entropy, uint256 upperBound) private pure returns (uint256) {
+        if (upperBound == 0) return 0;
+        uint256 min = (type(uint256).max - upperBound + 1) % upperBound;
+        uint256 random = entropy;
+        while (random < min) {
+            random = uint256(keccak256(abi.encode(random)));
+        }
+        return random % upperBound;
     }
 }

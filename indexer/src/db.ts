@@ -34,8 +34,8 @@ export function createDb(config: Config): SupabaseClient {
 }
 
 /**
- * Resume point for this (chain, vault). A missing row means the table has never been
- * populated, so the caller starts from the deployment block.
+ * Resume point for this (chain, vault). A missing row means live mode: the caller
+ * starts at the current safe tip. Use `--from-deployment` / `npm run backfill` for history.
  */
 export async function readCursor(
   db: SupabaseClient,
@@ -81,9 +81,11 @@ export async function upsertEvents(
 ): Promise<number> {
   if (rows.length === 0) return 0;
 
+  // Update on conflict so a backfill can repair rows that were written with null
+  // draw_id / handles (e.g. when uint32 args were decoded as number, not bigint).
   const { error } = await db
     .from('vault_events')
-    .upsert(rows, { onConflict: 'chain_id,tx_hash,log_index', ignoreDuplicates: true });
+    .upsert(rows, { onConflict: 'chain_id,tx_hash,log_index', ignoreDuplicates: false });
 
   if (error) throw new Error(`Failed to upsert ${rows.length} event(s): ${error.message}`);
   return rows.length;

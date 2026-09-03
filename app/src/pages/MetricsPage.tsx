@@ -2,12 +2,7 @@ import { useMemo, useState } from 'react';
 import type { Hex } from 'viem';
 import { useDecryptPublicValues } from '@zama-fhe/react-sdk';
 import { HugeiconsIcon } from '@hugeicons/react';
-import {
-  Analytics01Icon,
-  ChartIncreaseIcon,
-  SquareLock02Icon,
-  ViewIcon,
-} from '@hugeicons/core-free-icons';
+import { Analytics01Icon, ViewIcon } from '@hugeicons/core-free-icons';
 import toast from 'react-hot-toast';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card } from '@/components/ui/Card';
@@ -27,21 +22,15 @@ function isPublished(handle: Hex | undefined): handle is Hex {
   return Boolean(handle && handle !== NO_HANDLE);
 }
 
-/**
- * Public aggregates only — never per-user amounts.
- * TVL publish needs ≥3 depositors; prizes-paid publish needs ≥5 draws (admin).
- */
+/** Public aggregates only — never per-user amounts. */
 export function MetricsPage() {
   const stats = usePoolStats();
   const activity = usePoolActivity();
   const { mutateAsync: decryptPublicValues, isPending: decrypting } = useDecryptPublicValues();
 
-  const [tvl, setTvl] = useState<bigint | null>(null);
   const [prizesPaid, setPrizesPaid] = useState<bigint | null>(null);
 
-  const tvlPublished = isPublished(stats.publicTvlHandle);
   const prizesPublished = isPublished(stats.revealedHandle);
-  const tvlReady = stats.depositorCount >= stats.minDepositsBeforeTvlReveal;
   const prizesReady = stats.drawsCompleted >= stats.minDrawsBeforeReveal;
 
   const depositSeries = useMemo(() => {
@@ -68,21 +57,13 @@ export function MetricsPage() {
     }));
   }, [activity.data]);
 
-  const volumeSeries = useMemo(() => {
-    const points: Array<{ x: number; y: number }> = [];
-    if (tvl !== null) points.push({ x: 0, y: Number(tvl) / 1e6 });
-    if (prizesPaid !== null) points.push({ x: 1, y: Number(prizesPaid) / 1e6 });
-    if (points.length === 1) points.push({ x: 1, y: points[0].y });
-    return points;
-  }, [tvl, prizesPaid]);
-
-  const decrypt = async (handle: Hex, kind: 'tvl' | 'prizes') => {
+  const decryptPrizes = async () => {
+    if (!stats.revealedHandle) return;
     try {
+      const handle = stats.revealedHandle;
       const result = await decryptPublicValues([handle]);
       const clear = result.clearValues[handle] ?? result.clearValues[handle.toLowerCase() as Hex];
-      const value = typeof clear === 'bigint' ? clear : BigInt(String(clear ?? 0));
-      if (kind === 'tvl') setTvl(value);
-      else setPrizesPaid(value);
+      setPrizesPaid(typeof clear === 'bigint' ? clear : BigInt(String(clear ?? 0)));
     } catch (error) {
       toast.error(humanizeError(error));
     }
@@ -93,31 +74,10 @@ export function MetricsPage() {
       <PageHeader
         kicker="Metrics"
         title="Public aggregates only"
-        description="TVL and total prizes paid stay encrypted until an admin publishes a snapshot. Charts never show who deposited or who won."
+        description="Total prizes paid stays encrypted until an admin publishes a snapshot. Charts never show who deposited or who won."
       />
 
-      <div className="mt-8 grid gap-5 lg:grid-cols-2">
-        <MetricPanel
-          title="Total value locked"
-          eyebrow="Principal aggregate"
-          badge={
-            tvlPublished ? 'Published' : tvlReady ? 'Awaiting admin' : `${stats.depositorCount}/${stats.minDepositsBeforeTvlReveal} depositors`
-          }
-          tone={tvlPublished ? 'success' : tvlReady ? 'warning' : 'neutral'}
-          body={
-            tvlPublished
-              ? 'An admin published the vault’s encrypted principal total. Anyone can public-decrypt this snapshot — no EIP-712.'
-              : tvlReady
-                ? 'Deposit threshold met. An admin can publish TVL from the Admin page so every participant can verify pool size.'
-                : `TVL becomes eligible for public decrypt after ${stats.minDepositsBeforeTvlReveal.toString()} depositors have joined. Until then the aggregate stays dark.`
-          }
-          value={tvl}
-          loading={stats.isLoading}
-          decrypting={decrypting}
-          canDecrypt={tvlPublished}
-          onDecrypt={() => void decrypt(stats.publicTvlHandle!, 'tvl')}
-        />
-
+      <div className="mt-8 grid gap-5">
         <MetricPanel
           title="Prizes paid so far"
           eyebrow="Claim aggregate"
@@ -133,14 +93,14 @@ export function MetricsPage() {
             prizesPublished
               ? 'Published after enough draws so a single claim cannot be isolated from the running total.'
               : prizesReady
-                ? 'Draw threshold met. An admin can publish total prizes paid so everyone can verify volume without seeing who won.'
-                : `Total prizes paid becomes eligible after ${stats.minDrawsBeforeReveal.toString()} draws. That delay protects winners from being linked to one payout.`
+                ? 'Draw threshold met. An admin can publish total prizes paid from Admin.'
+                : `Eligible after ${stats.minDrawsBeforeReveal.toString()} draws so winners stay unlinkable from a single payout.`
           }
           value={prizesPaid}
           loading={stats.isLoading}
           decrypting={decrypting}
           canDecrypt={prizesPublished}
-          onDecrypt={() => void decrypt(stats.revealedHandle!, 'prizes')}
+          onDecrypt={() => void decryptPrizes()}
         />
       </div>
 
@@ -148,55 +108,28 @@ export function MetricsPage() {
         <Card>
           <div className="mb-4 flex items-center gap-2">
             <div className="icon-tile size-9">
-              <HugeiconsIcon icon={ChartIncreaseIcon} size={16} aria-hidden />
+              <HugeiconsIcon icon={Analytics01Icon} size={17} aria-hidden />
             </div>
             <div>
-              <p className="label-pill">Depositors over time</p>
-              <p className="text-[0.78rem] text-hint">Clear activity count — not amounts</p>
+              <h3 className="font-bold">Depositor count over time</h3>
+              <p className="text-[0.78rem] text-muted">Counts only — never amounts</p>
             </div>
           </div>
-          {activity.isLoading ? (
-            <Skeleton className="h-40 w-full" />
-          ) : (
-            <SparkLine points={depositSeries} emptyLabel="No deposits indexed yet" />
-          )}
+          <SparkLine points={depositSeries} />
         </Card>
-
         <Card>
           <div className="mb-4 flex items-center gap-2">
             <div className="icon-tile size-9">
-              <HugeiconsIcon icon={Analytics01Icon} size={16} aria-hidden />
+              <HugeiconsIcon icon={ViewIcon} size={17} aria-hidden />
             </div>
             <div>
-              <p className="label-pill">Draws completed</p>
-              <p className="text-[0.78rem] text-hint">Onchain draw ids from the indexer</p>
+              <h3 className="font-bold">Draws opened</h3>
+              <p className="text-[0.78rem] text-muted">From indexed vault events</p>
             </div>
           </div>
-          {activity.isLoading ? (
-            <Skeleton className="h-40 w-full" />
-          ) : (
-            <SparkLine points={drawSeries} emptyLabel="No draws indexed yet" />
-          )}
+          <SparkLine points={drawSeries} />
         </Card>
       </div>
-
-      <Card className="mt-5">
-        <div className="mb-4 flex items-center gap-2">
-          <div className="icon-tile size-9">
-            <HugeiconsIcon icon={SquareLock02Icon} size={16} aria-hidden />
-          </div>
-          <div>
-            <p className="label-pill">Published volume (cUSDC)</p>
-            <p className="text-[0.78rem] text-hint">
-              Orange series appears only after you decrypt published TVL / prizes snapshots above
-            </p>
-          </div>
-        </div>
-        <SparkLine
-          points={volumeSeries}
-          emptyLabel="Decrypt a published snapshot to plot volume"
-        />
-      </Card>
     </div>
   );
 }
@@ -229,39 +162,32 @@ function MetricPanel({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="label-pill">{eyebrow}</p>
-          <h3 className="mt-1 text-[1.05rem] font-bold text-ink">{title}</h3>
+          <h2 className="mt-1 font-bold">{title}</h2>
         </div>
         <Badge tone={tone}>{badge}</Badge>
       </div>
-
-      {loading ? (
-        <Skeleton className="mt-5 h-20 w-full" />
-      ) : (
-        <div className="mt-5 rounded-lg border border-hairline bg-surface px-4 py-4">
-          {value === null ? (
-            <p className="text-[0.84rem] leading-relaxed text-muted">{body}</p>
-          ) : (
-            <p className="numeral text-[1.85rem] leading-none font-bold text-accent-deep">
-              {formatConfidential(value)}
-              <span className="ml-2 text-[0.85rem] font-semibold text-muted">
-                {CONFIDENTIAL_SYMBOL}
-              </span>
-            </p>
-          )}
-          {canDecrypt ? (
-            <Button
-              className="mt-4"
-              variant="secondary"
-              size="sm"
-              loading={decrypting}
-              onClick={onDecrypt}
-            >
-              <HugeiconsIcon icon={ViewIcon} size={15} aria-hidden />
-              {value === null ? 'Decrypt publicly' : 'Refresh'}
-            </Button>
-          ) : null}
-        </div>
-      )}
+      <p className="mt-3 text-[0.84rem] leading-relaxed text-muted">{body}</p>
+      <div className="mt-5">
+        {loading ? (
+          <Skeleton className="h-8 w-32" />
+        ) : value !== null ? (
+          <p className="numeral text-[1.75rem] font-bold">
+            {formatConfidential(value)}{' '}
+            <span className="text-[0.9rem] font-semibold text-muted">{CONFIDENTIAL_SYMBOL}</span>
+          </p>
+        ) : (
+          <p className="text-[0.9rem] text-hint">Not decrypted yet</p>
+        )}
+      </div>
+      <Button
+        className="mt-5"
+        variant="secondary"
+        disabled={!canDecrypt || decrypting}
+        loading={decrypting}
+        onClick={onDecrypt}
+      >
+        Public-decrypt
+      </Button>
     </Card>
   );
 }

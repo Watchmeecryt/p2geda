@@ -2,103 +2,149 @@ import type { ZamaSDK } from '@zama-fhe/sdk';
 import {
   createPublicClient,
   createWalletClient,
-  decodeEventLog,
-  encodeAbiParameters,
   http,
-  keccak256,
-  parseAbi,
-  toBytes,
   type Hex,
   type PublicClient,
-  type TransactionReceipt,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import { loadKeeperConfig, type KeeperConfig } from './env.js';
-import {
-  encryptEuint64,
-  getSdk,
-  publicDecryptHandle,
-  userDecryptHandle,
-} from './relayer.js';
+import { getSdk, publicDecryptHandles } from './relayer.js';
 
 /**
- * ConfiPool keeper — Node FHE (`node()` RelayerNode pool) + owner wallet.
+ * ConfiPool V5 keeper — Node FHE + owner wallet.
  *
- * YIELD LEG (requires Node encrypt / publicDecrypt for allocate sizing)
- *   1. Accrue fake APR into MockYield4626 (clear ERC-4626 — share price is public).
- *   2. Allocate idle principal into MockYield after a closed deposit bus, or while idle
- *      if depositors still hold unallocated principal (e.g. after withdraw redeemed yield).
- *   3. harvestClear() → clear surplus to owner (leaked on purpose).
- *   4. Encrypt **100%** of harvested yield into `_prizeReserve`.
+ * Each tick:
+ *   1. harvest() — fold ConfidentialVaultSource pot into encrypted reserve (may be 0 on Sepolia).
+ *   2. openDraw() when minPeriod elapsed and previous draw resolved.
+ *   3. revealDraw() — publicDecrypt encR + encTotalWeight, submit cleartexts + proof.
+ *   4. accrueMany() — batch depositors for the latest revealed draw.
  *
- * DRAW LEG
- *   Before draw: EIP-712 **userDecrypt** of `_prizeReserve` (same path as Admin UI —
- *   never `makePubliclyDecryptable`), size prize-per-draw to `prizeShareBps`, then `draw()`.
- *   Bus draws are permissionless once due; idle redraws (no new deposits) are owner-only.
- *   The app also exposes a public **Draw winner** button for the bus path.
- *
- * Same OWNER_PRIVATE_KEY as vault.owner(). Mainnet: swap sepolia → mainnet + API key
- * in relayer.ts; point VAULT_ADDRESS / yield at Morpho.
+ * Sepolia demos: admin fundReserve from the UI so prizes pay even when Morpho staging is idle.
+ * Same OWNER_PRIVATE_KEY as vault.owner().
  */
 
-const RESERVE_DEPOSIT_TAG = keccak256(toBytes('CONFIPOOL_PRIZE_RESERVE'));
+const VAULT_ABI = [
+  {
+    type: 'function',
+    name: 'owner',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'nextOpenableAt',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint40' }],
+  },
+  {
+    type: 'function',
+    name: 'drawCount',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint32' }],
+  },
+  {
+    type: 'function',
+    name: 'depositorCount',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'depositorAt',
+    stateMutability: 'view',
+    inputs: [{ name: 'index', type: 'uint256' }],
+    outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'MAX_ACCRUE_BATCH',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'tiersConfigured',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'bool' }],
+  },
+  {
+    type: 'function',
+    name: 'yieldSource',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'drawAt',
+    stateMutability: 'view',
+    inputs: [{ name: 'drawId', type: 'uint32' }],
+    outputs: [
+      { name: 'periodStart', type: 'uint40' },
+      { name: 'snapshotAt', type: 'uint40' },
+      { name: 'status', type: 'uint8' },
+      { name: 'encR', type: 'bytes32' },
+      { name: 'encTotalWeight', type: 'bytes32' },
+      { name: 'r', type: 'uint64' },
+      { name: 'totalWeight', type: 'uint128' },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'accrued',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'drawId', type: 'uint32' },
+      { name: 'account', type: 'address' },
+    ],
+    outputs: [{ type: 'bool' }],
+  },
+  {
+    type: 'function',
+    name: 'openDraw',
+    stateMutability: 'nonpayable',
+    inputs: [],
+    outputs: [{ type: 'uint32' }],
+  },
+  {
+    type: 'function',
+    name: 'revealDraw',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'drawId', type: 'uint32' },
+      { name: 'cleartexts', type: 'bytes' },
+      { name: 'decryptionProof', type: 'bytes' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'accrueMany',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'users', type: 'address[]' },
+      { name: 'drawId', type: 'uint32' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'harvest',
+    stateMutability: 'nonpayable',
+    inputs: [],
+    outputs: [],
+  },
+] as const;
 
-/** USDC Mock 6 decimals → cUSDCMock 6 decimals (rate = 1). */
-const WRAP_RATE = 1n;
-
-const VAULT_ABI = parseAbi([
-  'function nextDrawAt() view returns (uint256)',
-  'function prizePerDrawConfigured() view returns (bool)',
-  'function prizeReserveFunded() view returns (bool)',
-  'function depositorCount() view returns (uint256)',
-  'function drawsCompleted() view returns (uint256)',
-  'function owner() view returns (address)',
-  'function yieldVault() view returns (address)',
-  'function allocatedUnderlying() view returns (uint256)',
-  'function prizeShareBps() view returns (uint16)',
-  'function confidentialToken() view returns (address)',
-  'function underlyingToken() view returns (address)',
-  'function confidentialTotalPrincipal() view returns (bytes32)',
-  'function confidentialPrizeReserve() view returns (bytes32)',
-  'function lastTotalPrincipalRevealHandle() view returns (bytes32)',
-  'function pendingAllocateUnwrapId() view returns (bytes32)',
-  'function depositWindowClosesAt() view returns (uint256)',
-  'function depositWindowOpensAt() view returns (uint256)',
-  'function depositsOpen() view returns (bool)',
-  'function RESERVE_DEPOSIT_TAG() view returns (bytes32)',
-  'function draw()',
-  'function harvestClear() returns (uint256)',
-  'function requestTotalPrincipalReveal() returns (bytes32)',
-  'function requestAllocate(bytes32 encryptedAmount, bytes inputProof) returns (bytes32)',
-  'function finalizeAllocate(uint64 unwrapAmountCleartext, bytes decryptionProof) returns (uint256)',
-  'function setPrizePerDraw(bytes32 encryptedAmount, bytes inputProof)',
-  'event AllocateRequested(bytes32 indexed unwrapRequestId)',
-  'event TotalPrincipalRevealRequested(bytes32 indexed handle)',
-]);
-
-const YIELD_ABI = parseAbi([
-  'function accrue(uint256 amount)',
-  'function totalAssets() view returns (uint256)',
-  'function asset() view returns (address)',
-  'function aprBps() view returns (uint16)',
-  'function lastAccrualAt() view returns (uint256)',
-  'function deposit(uint256 assets, address receiver) returns (uint256)',
-]);
-
-const ERC20_ABI = parseAbi([
-  'function mint(address to, uint256 amount)',
-  'function approve(address spender, uint256 amount) returns (bool)',
-  'function balanceOf(address account) view returns (uint256)',
-]);
-
-const ERC7984_ABI = parseAbi([
-  'function wrap(address to, uint256 amount) returns (bytes32)',
-  'function rate() view returns (uint256)',
-  'function confidentialTransferAndCall(address to, bytes32 encryptedAmount, bytes inputProof, bytes data) returns (bytes32)',
-  'event UnwrapRequested(address indexed receiver, uint256 indexed expiryTimeStamp, bytes32 amount)',
-]);
-
+const DRAW_OPEN = 1;
+const DRAW_REVEALED = 2;
 const ZERO = '0x0000000000000000000000000000000000000000000000000000000000000000' as const;
 const ONCE = process.argv.includes('--once');
 
@@ -130,26 +176,22 @@ async function main() {
     );
   }
 
-  const yieldVault = await readYieldVault(publicClient, config);
   const sdk = await getSdk({ rpcUrl: config.rpcUrl, account });
 
   log(
     `keeper ready for vault ${config.vaultAddress} as ${account.address}` +
-      (yieldVault ? ` · yield ${yieldVault}` : ' · yield not set') +
-      ` · ZamaSDK node() RelayerNode (poll every ${config.pollIntervalMs}ms)`,
+      ` · poll every ${config.pollIntervalMs}ms`,
   );
-  log(
-    'legs each tick: (1) allocate after deposit window closes  (2) accrue  (3) harvest→encrypt 100% reserve  (4) EIP-712 userDecrypt reserve → prizeShareBps → draw only when a closed deposit bus is due (idle redraw = admin)',
-  );
+  log('legs each tick: harvest → openDraw → revealDraw → accrueMany');
 
   if (ONCE) {
-    await tick(config, publicClient, walletClient, yieldVault, sdk);
+    await tick(config, publicClient, walletClient, sdk);
     return;
   }
 
   for (;;) {
     try {
-      await tick(config, publicClient, walletClient, yieldVault, sdk);
+      await tick(config, publicClient, walletClient, sdk);
     } catch (error) {
       log(`tick failed: ${describe(error)}`);
     }
@@ -157,628 +199,236 @@ async function main() {
   }
 }
 
-async function readYieldVault(
-  publicClient: PublicClient,
-  config: KeeperConfig,
-): Promise<`0x${string}` | null> {
-  try {
-    const addr = (await publicClient.readContract({
-      address: config.vaultAddress,
-      abi: VAULT_ABI,
-      functionName: 'yieldVault',
-    })) as `0x${string}`;
-    if (!addr || addr === ZERO) return null;
-    return addr;
-  } catch {
-    return null;
-  }
-}
-
 async function tick(
   config: KeeperConfig,
   publicClient: PublicClient,
   walletClient: Wallet,
-  yieldVault: `0x${string}` | null,
   sdk: ZamaSDK,
 ) {
-  if (yieldVault) {
-    await maybeAllocateWithRelayer(config, publicClient, walletClient, sdk);
-    await maybeAccrue(config, publicClient, walletClient, yieldVault);
-    await maybeHarvestAndEncryptReserve(
-      config,
-      publicClient,
-      walletClient,
-      yieldVault,
-      sdk,
-    );
-  } else {
-    log('yield: skip (no yieldVault — run deploy:yield:sepolia)');
-  }
-
-  await maybeDraw(config, publicClient, walletClient, sdk);
+  await maybeHarvest(config, publicClient, walletClient);
+  await maybeOpenDraw(config, publicClient, walletClient);
+  await maybeReveal(config, publicClient, walletClient, sdk);
+  await maybeAccrue(config, publicClient, walletClient);
 }
 
-/**
- * Custody-correct allocate: park idle principal into MockYield.
- * Runs after a deposit bus closes, and also while idle (window cleared) if
- * depositors still hold principal that is not yet in the yield vault — e.g. after
- * withdraws pulled all allocated liquidity back to pay exits.
- */
-async function maybeAllocateWithRelayer(
+async function maybeHarvest(
   config: KeeperConfig,
   publicClient: PublicClient,
   walletClient: Wallet,
-  sdk: ZamaSDK,
 ) {
-  const [windowClosesAt, depositsStillOpen, depositorCount] = (await Promise.all([
-    publicClient.readContract({
-      address: config.vaultAddress,
-      abi: VAULT_ABI,
-      functionName: 'depositWindowClosesAt',
-    }),
-    publicClient.readContract({
-      address: config.vaultAddress,
-      abi: VAULT_ABI,
-      functionName: 'depositsOpen',
-    }),
-    publicClient.readContract({
-      address: config.vaultAddress,
-      abi: VAULT_ABI,
-      functionName: 'depositorCount',
-    }),
-  ])) as [bigint, boolean, bigint];
-
-  if (depositorCount === 0n) {
-    log('yield.allocate: skip — no depositors');
-    return;
-  }
-
-  if (windowClosesAt === 0n) {
-    log(
-      'yield.allocate: no open deposit bus — checking idle principal still on the prize vault…',
-    );
-  } else if (depositsStillOpen) {
-    const remaining = Number(windowClosesAt) - Math.floor(Date.now() / 1000);
-    log(
-      `yield.allocate: skip — deposit window still open (${remaining > 0 ? `${remaining}s left` : 'closing…'})`,
-    );
-    return;
-  } else {
-    log('yield.allocate: deposit bus closed — sizing idle principal…');
-  }
-
-  const allocated = (await publicClient.readContract({
+  const source = (await publicClient.readContract({
     address: config.vaultAddress,
     abi: VAULT_ABI,
-    functionName: 'allocatedUnderlying',
-  })) as bigint;
-
-  const cToken = (await publicClient.readContract({
-    address: config.vaultAddress,
-    abi: VAULT_ABI,
-    functionName: 'confidentialToken',
+    functionName: 'yieldSource',
   })) as `0x${string}`;
 
-  // After withdraw, `_totalPrincipal` is a *new* ciphertext handle while
-  // `lastTotalPrincipalRevealHandle` can still point at the pre-withdraw value.
-  const [currentPrincipalHandle, lastRevealHandle] = (await Promise.all([
-    publicClient.readContract({
-      address: config.vaultAddress,
-      abi: VAULT_ABI,
-      functionName: 'confidentialTotalPrincipal',
-    }),
-    publicClient.readContract({
-      address: config.vaultAddress,
-      abi: VAULT_ABI,
-      functionName: 'lastTotalPrincipalRevealHandle',
-    }),
-  ])) as [Hex, Hex];
-
-  let principalHandle: Hex = lastRevealHandle;
-  if (
-    !currentPrincipalHandle ||
-    currentPrincipalHandle === ZERO ||
-    currentPrincipalHandle.toLowerCase() !== (lastRevealHandle ?? ZERO).toLowerCase()
-  ) {
-    log(
-      `yield.allocate: principal handle changed (${lastRevealHandle} → ${currentPrincipalHandle}); requesting reveal…`,
-    );
-    try {
-      const hash = await walletClient.writeContract({
-        address: config.vaultAddress,
-        abi: VAULT_ABI,
-        functionName: 'requestTotalPrincipalReveal',
-        account: walletClient.account!,
-        chain: sepolia,
-      });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      principalHandle =
-        parsePrincipalRevealHandle(receipt) ??
-        ((await publicClient.readContract({
-          address: config.vaultAddress,
-          abi: VAULT_ABI,
-          functionName: 'lastTotalPrincipalRevealHandle',
-        })) as Hex);
-      log(`yield.allocate: reveal submitted ${hash}`);
-    } catch (error) {
-      if (!/RevealAlreadyRequested/i.test(describe(error))) throw error;
-      principalHandle = (await publicClient.readContract({
-        address: config.vaultAddress,
-        abi: VAULT_ABI,
-        functionName: 'lastTotalPrincipalRevealHandle',
-      })) as Hex;
-      log('yield.allocate: current principal already publicly decryptable');
-    }
-  } else {
-    log('yield.allocate: reusing current principal reveal handle');
-  }
-
-  if (!principalHandle || principalHandle === ZERO) {
-    log('yield.allocate: skip — no principal reveal handle');
+  if (!source || source === ZERO) {
+    log('harvest: skip — no yieldSource (admin fundReserve is the demo path)');
     return;
   }
-
-  log(`yield.allocate: publicDecrypt ${principalHandle}…`);
-  const decrypted = await publicDecryptHandle(sdk, principalHandle);
-  const principalConf = decrypted.cleartext;
-  if (principalConf === 0n) {
-    log('yield.allocate: skip — aggregate principal is 0 (nothing to park in MockYield)');
-    return;
-  }
-
-  const alreadyAllocatedConf = allocated / WRAP_RATE;
-  if (principalConf <= alreadyAllocatedConf) {
-    log(
-      `yield.allocate: skip — principal ${principalConf} already covered by allocatedUnderlying ${allocated}`,
-    );
-    return;
-  }
-  const idleConf = principalConf - alreadyAllocatedConf;
-  log(
-    `yield.allocate: park idle ${idleConf} confidential units (principal ${principalConf}, already allocated ${alreadyAllocatedConf})`,
-  );
-
-  const encrypted = await encryptEuint64(sdk, {
-    amount: idleConf,
-    contractAddress: cToken,
-    userAddress: config.vaultAddress,
-  });
-
-  log('yield.allocate: requestAllocate (unwrap)…');
-  const reqHash = await walletClient.writeContract({
-    address: config.vaultAddress,
-    abi: VAULT_ABI,
-    functionName: 'requestAllocate',
-    args: [encrypted.handle, encrypted.inputProof],
-    account: walletClient.account!,
-    chain: sepolia,
-  });
-  const reqReceipt = await publicClient.waitForTransactionReceipt({ hash: reqHash });
-  const burntHandle =
-    parseUnwrapBurntHandle(reqReceipt, cToken) ??
-    ((await publicClient.readContract({
-      address: config.vaultAddress,
-      abi: VAULT_ABI,
-      functionName: 'pendingAllocateUnwrapId',
-    })) as Hex);
-
-  log(`yield.allocate: publicDecrypt burnt handle ${burntHandle}…`);
-  const burnt = await publicDecryptHandle(sdk, burntHandle);
-  const clearU64 =
-    burnt.cleartext <= 0xffff_ffff_ffff_ffffn ? burnt.cleartext : 0n;
-
-  const finHash = await walletClient.writeContract({
-    address: config.vaultAddress,
-    abi: VAULT_ABI,
-    functionName: 'finalizeAllocate',
-    args: [clearU64, burnt.decryptionProof],
-    account: walletClient.account!,
-    chain: sepolia,
-  });
-  await publicClient.waitForTransactionReceipt({ hash: finHash });
-
-  const newAllocated = (await publicClient.readContract({
-    address: config.vaultAddress,
-    abi: VAULT_ABI,
-    functionName: 'allocatedUnderlying',
-  })) as bigint;
-  if (newAllocated === allocated) {
-    log(
-      `yield.allocate: warn — allocatedUnderlying unchanged at ${newAllocated} after finalize (${finHash})`,
-    );
-    return;
-  }
-  log(`yield.allocate: done — allocatedUnderlying=${newAllocated} (${finHash})`);
-}
-
-async function maybeHarvestAndEncryptReserve(
-  config: KeeperConfig,
-  publicClient: PublicClient,
-  walletClient: Wallet,
-  _yieldVault: `0x${string}`,
-  sdk: ZamaSDK,
-) {
-  const owner = walletClient.account!.address;
 
   try {
     await publicClient.simulateContract({
       address: config.vaultAddress,
       abi: VAULT_ABI,
-      functionName: 'harvestClear',
-      account: owner,
+      functionName: 'harvest',
+      account: walletClient.account!.address,
     });
   } catch (error) {
-    log(`yield.harvest: skip — ${describe(error)}`);
+    log(`harvest: skip — ${describe(error)}`);
     return;
   }
-
-  const before = (await publicClient.readContract({
-    address: await readUnderlying(publicClient, config),
-    abi: ERC20_ABI,
-    functionName: 'balanceOf',
-    args: [owner],
-  })) as bigint;
 
   const hash = await walletClient.writeContract({
     address: config.vaultAddress,
     abi: VAULT_ABI,
-    functionName: 'harvestClear',
+    functionName: 'harvest',
     account: walletClient.account!,
     chain: sepolia,
   });
   await publicClient.waitForTransactionReceipt({ hash });
-
-  const after = (await publicClient.readContract({
-    address: await readUnderlying(publicClient, config),
-    abi: ERC20_ABI,
-    functionName: 'balanceOf',
-    args: [owner],
-  })) as bigint;
-
-  const harvested = after > before ? after - before : 0n;
-  if (harvested === 0n) {
-    log('yield.harvest: clear amount 0 after harvestClear');
-    return;
-  }
-  log(`yield.harvest: clear surplus ${harvested} underlying (${hash}) — this size is public`);
-
-  // Align full harvest to confidential units (floor dust stays with owner).
-  const reserveConf = harvested / WRAP_RATE;
-  if (reserveConf === 0n) {
-    log('yield.harvest: harvested below one confidential unit');
-    return;
-  }
-  const wrapAmount = reserveConf * WRAP_RATE;
-
-  log(
-    `yield.harvest: encrypt 100% reserve=${reserveConf} conf units (prize-per-draw sized at draw time from full pot)`,
-  );
-
-  const cToken = (await publicClient.readContract({
-    address: config.vaultAddress,
-    abi: VAULT_ABI,
-    functionName: 'confidentialToken',
-  })) as `0x${string}`;
-  const underlying = await readUnderlying(publicClient, config);
-
-  const approveWrap = await walletClient.writeContract({
-    address: underlying,
-    abi: ERC20_ABI,
-    functionName: 'approve',
-    args: [cToken, wrapAmount],
-    account: walletClient.account!,
-    chain: sepolia,
-  });
-  await publicClient.waitForTransactionReceipt({ hash: approveWrap });
-
-  const wrapHash = await walletClient.writeContract({
-    address: cToken,
-    abi: ERC7984_ABI,
-    functionName: 'wrap',
-    args: [owner, wrapAmount],
-    account: walletClient.account!,
-    chain: sepolia,
-  });
-  await publicClient.waitForTransactionReceipt({ hash: wrapHash });
-  log(`yield.harvest: wrapped ${wrapAmount} → cToken (${wrapHash})`);
-
-  // Encrypt 100% of harvest into the prize reserve. Do NOT overwrite prize-per-draw here —
-  // that is sized from the full reserve immediately before draw().
-  const encReserve = await encryptEuint64(sdk, {
-    amount: reserveConf,
-    contractAddress: cToken,
-    userAddress: owner,
-  });
-  const fundHash = await walletClient.writeContract({
-    address: cToken,
-    abi: ERC7984_ABI,
-    functionName: 'confidentialTransferAndCall',
-    args: [
-      config.vaultAddress,
-      encReserve.handle,
-      encReserve.inputProof,
-      encodeAbiParameters([{ type: 'bytes32' }], [RESERVE_DEPOSIT_TAG]),
-    ],
-    account: walletClient.account!,
-    chain: sepolia,
-  });
-  await publicClient.waitForTransactionReceipt({ hash: fundHash });
-  log(`yield.harvest: encrypted reserve funded 100% of harvest (${fundHash})`);
+  log(`harvest: submitted ${hash}`);
 }
 
-async function readUnderlying(
-  publicClient: PublicClient,
+async function maybeOpenDraw(
   config: KeeperConfig,
-): Promise<`0x${string}`> {
-  return (await publicClient.readContract({
-    address: config.vaultAddress,
-    abi: VAULT_ABI,
-    functionName: 'underlyingToken',
-  })) as `0x${string}`;
+  publicClient: PublicClient,
+  walletClient: Wallet,
+) {
+  const vault = { address: config.vaultAddress, abi: VAULT_ABI } as const;
+  const [nextOpenableAt, drawCount, depositorCount, tiersConfigured] = await Promise.all([
+    publicClient.readContract({ ...vault, functionName: 'nextOpenableAt' }),
+    publicClient.readContract({ ...vault, functionName: 'drawCount' }),
+    publicClient.readContract({ ...vault, functionName: 'depositorCount' }),
+    publicClient.readContract({ ...vault, functionName: 'tiersConfigured' }),
+  ]);
+
+  if (!tiersConfigured) {
+    log('openDraw: skip — tiers not configured');
+    return;
+  }
+  if (depositorCount === 0n) {
+    log('openDraw: skip — no depositors');
+    return;
+  }
+
+  const count = Number(drawCount);
+  if (count > 0) {
+    const draw = (await publicClient.readContract({
+      ...vault,
+      functionName: 'drawAt',
+      args: [count],
+    })) as unknown as readonly [number, number, number, Hex, Hex, bigint, bigint];
+    if (Number(draw[2]) === DRAW_OPEN) {
+      log(`openDraw: skip — draw #${count} still open (awaiting reveal)`);
+      return;
+    }
+  }
+
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  const openable = BigInt(nextOpenableAt);
+  if (now < openable) {
+    log(`openDraw: skip — next in ${Number(openable - now)}s`);
+    return;
+  }
+
+  try {
+    const hash = await walletClient.writeContract({
+      ...vault,
+      functionName: 'openDraw',
+      account: walletClient.account!,
+      chain: sepolia,
+    });
+    await publicClient.waitForTransactionReceipt({ hash });
+    const newCount = await publicClient.readContract({ ...vault, functionName: 'drawCount' });
+    log(`openDraw: #${newCount} confirmed (${hash})`);
+  } catch (error) {
+    if (isSoftSkip(error)) {
+      log(`openDraw: soft skip — ${describe(error)}`);
+      return;
+    }
+    throw error;
+  }
 }
 
-async function maybeDraw(
+async function maybeReveal(
   config: KeeperConfig,
   publicClient: PublicClient,
   walletClient: Wallet,
   sdk: ZamaSDK,
 ) {
   const vault = { address: config.vaultAddress, abi: VAULT_ABI } as const;
-  const owner = walletClient.account!.address;
-
-  const [nextDrawAt, reserveFunded, depositorCount, drawsCompleted, prizeShareBps, depositWindowClosesAt] =
-    await Promise.all([
-      publicClient.readContract({ ...vault, functionName: 'nextDrawAt' }),
-      publicClient.readContract({ ...vault, functionName: 'prizeReserveFunded' }),
-      publicClient.readContract({ ...vault, functionName: 'depositorCount' }),
-      publicClient.readContract({ ...vault, functionName: 'drawsCompleted' }),
-      publicClient.readContract({ ...vault, functionName: 'prizeShareBps' }),
-      publicClient.readContract({ ...vault, functionName: 'depositWindowClosesAt' }),
-    ]);
-
-  const now = BigInt(Math.floor(Date.now() / 1000));
-  if (!reserveFunded) {
-    log('draw: skip — prize reserve not funded');
-    return;
-  }
-  if (depositorCount === 0n) {
-    log('draw: skip — no depositors');
-    return;
-  }
-  // Keeper only draws for a closed deposit bus. Idle schedules (`lastDrawAt + interval`
-  // with window cleared) are for Admin → Draw, not automatic keeper ticks.
-  if (depositWindowClosesAt === 0n) {
-    log('draw: skip — no closed deposit bus (idle redraw is admin-only)');
-    return;
-  }
-  if (nextDrawAt === 0n) {
-    log('draw: skip — no draw scheduled');
-    return;
-  }
-  if (now < nextDrawAt) {
-    log(`draw: skip — next draw in ${Number(nextDrawAt - now)}s (draw #${drawsCompleted + 1n})`);
+  const drawCount = Number(
+    await publicClient.readContract({ ...vault, functionName: 'drawCount' }),
+  );
+  if (drawCount === 0) {
+    log('reveal: skip — no draws');
     return;
   }
 
-  try {
-    // Size prize-per-draw via private EIP-712 userDecrypt of the full reserve
-    // (same path as Admin UI). Do NOT call requestPrizeReserveReveal — that would
-    // make the pot publicly decryptable.
-    const reserveHandle = (await publicClient.readContract({
-      ...vault,
-      functionName: 'confidentialPrizeReserve',
-    })) as Hex;
+  const draw = (await publicClient.readContract({
+    ...vault,
+    functionName: 'drawAt',
+    args: [drawCount],
+  })) as unknown as readonly [number, number, number, Hex, Hex, bigint, bigint];
 
-    if (!reserveHandle || reserveHandle === ZERO) {
-      log('draw: skip — prize reserve handle missing');
-      return;
-    }
-
-    log(`draw: userDecrypt (EIP-712) reserve ${reserveHandle}…`);
-    const reserveConf = await userDecryptHandle(sdk, {
-      handle: reserveHandle,
-      contractAddress: config.vaultAddress,
-    });
-    if (reserveConf === 0n) {
-      log('draw: skip — prize reserve is 0');
-      return;
-    }
-
-    const prizeConf = (reserveConf * BigInt(prizeShareBps as number)) / 10_000n;
-    if (prizeConf === 0n) {
-      log(`draw: skip — prizeShareBps rounds prize to 0 (reserve=${reserveConf})`);
-      return;
-    }
-    log(
-      `draw: sizing prize-per-draw=${prizeConf} (${prizeShareBps} bps of reserve ${reserveConf})`,
-    );
-
-    const encPrize = await encryptEuint64(sdk, {
-      amount: prizeConf,
-      contractAddress: config.vaultAddress,
-      userAddress: owner,
-    });
-    const prizeHash = await walletClient.writeContract({
-      ...vault,
-      functionName: 'setPrizePerDraw',
-      args: [encPrize.handle, encPrize.inputProof],
-      account: walletClient.account!,
-      chain: sepolia,
-    });
-    await publicClient.waitForTransactionReceipt({ hash: prizeHash });
-    log(`draw: setPrizePerDraw confirmed (${prizeHash})`);
-
-    log(`draw: submitting #${drawsCompleted + 1n}…`);
-    const hash = await walletClient.writeContract({
-      ...vault,
-      functionName: 'draw',
-      account: walletClient.account!,
-      chain: sepolia,
-    });
-    log(`draw: submitted ${hash}`);
-    const receipt = await publicClient.waitForTransactionReceipt({ hash });
-    if (receipt.status === 'reverted') throw new Error(`draw reverted in ${hash}`);
-    const completed = await publicClient.readContract({
-      ...vault,
-      functionName: 'drawsCompleted',
-    });
-    log(`draw: #${completed} confirmed in block ${receipt.blockNumber}`);
-  } catch (error) {
-    if (isSoftSkip(error)) {
-      log(`draw: soft skip — ${describe(error)}`);
-      return;
-    }
-    throw error;
+  if (Number(draw[2]) !== DRAW_OPEN) {
+    log(`reveal: skip — draw #${drawCount} status=${draw[2]}`);
+    return;
   }
+
+  const encR = draw[3];
+  const encTotal = draw[4];
+  if (!encR || !encTotal || encR === ZERO || encTotal === ZERO) {
+    log('reveal: skip — missing encrypted handles');
+    return;
+  }
+
+  log(`reveal: publicDecrypt R + totalWeight for draw #${drawCount}…`);
+  const decrypted = await publicDecryptHandles(sdk, [encR, encTotal]);
+  log(
+    `reveal: clear R=${decrypted.values[0]} totalWeight=${decrypted.values[1]} — submitting…`,
+  );
+
+  const hash = await walletClient.writeContract({
+    ...vault,
+    functionName: 'revealDraw',
+    args: [drawCount, decrypted.cleartexts, decrypted.decryptionProof],
+    account: walletClient.account!,
+    chain: sepolia,
+  });
+  await publicClient.waitForTransactionReceipt({ hash });
+  log(`reveal: draw #${drawCount} revealed (${hash})`);
 }
 
 async function maybeAccrue(
   config: KeeperConfig,
   publicClient: PublicClient,
   walletClient: Wallet,
-  yieldVault: `0x${string}`,
 ) {
-  const allocated = (await publicClient.readContract({
-    address: config.vaultAddress,
-    abi: VAULT_ABI,
-    functionName: 'allocatedUnderlying',
-  })) as bigint;
-
-  if (allocated === 0n) {
-    log('yield.accrue: skip — nothing allocated yet');
+  const vault = { address: config.vaultAddress, abi: VAULT_ABI } as const;
+  const drawCount = Number(
+    await publicClient.readContract({ ...vault, functionName: 'drawCount' }),
+  );
+  if (drawCount === 0) {
+    log('accrue: skip — no draws');
     return;
   }
 
-  const [aprBps, lastAccrualAt, asset] = await Promise.all([
-    publicClient.readContract({ address: yieldVault, abi: YIELD_ABI, functionName: 'aprBps' }),
-    publicClient.readContract({
-      address: yieldVault,
-      abi: YIELD_ABI,
-      functionName: 'lastAccrualAt',
-    }),
-    publicClient.readContract({ address: yieldVault, abi: YIELD_ABI, functionName: 'asset' }),
+  const draw = (await publicClient.readContract({
+    ...vault,
+    functionName: 'drawAt',
+    args: [drawCount],
+  })) as unknown as readonly [number, number, number, Hex, Hex, bigint, bigint];
+
+  if (Number(draw[2]) !== DRAW_REVEALED) {
+    log(`accrue: skip — draw #${drawCount} not revealed`);
+    return;
+  }
+
+  const [depositorCount, batchSize] = await Promise.all([
+    publicClient.readContract({ ...vault, functionName: 'depositorCount' }),
+    publicClient.readContract({ ...vault, functionName: 'MAX_ACCRUE_BATCH' }),
   ]);
 
-  const now = BigInt(Math.floor(Date.now() / 1000));
-  const elapsed = now > (lastAccrualAt as bigint) ? now - (lastAccrualAt as bigint) : 0n;
-  const cappedElapsed = elapsed > 3600n ? 3600n : elapsed;
-  if (cappedElapsed === 0n) {
-    log('yield.accrue: skip — accrued this second already');
+  const maxBatch = Number(batchSize);
+  const pending: `0x${string}`[] = [];
+
+  for (let i = 0; i < Number(depositorCount); i++) {
+    const user = (await publicClient.readContract({
+      ...vault,
+      functionName: 'depositorAt',
+      args: [BigInt(i)],
+    })) as `0x${string}`;
+    const done = (await publicClient.readContract({
+      ...vault,
+      functionName: 'accrued',
+      args: [drawCount, user],
+    })) as boolean;
+    if (!done) pending.push(user);
+    if (pending.length >= maxBatch) break;
+  }
+
+  if (pending.length === 0) {
+    log(`accrue: draw #${drawCount} fully accrued`);
     return;
   }
 
-  const amountRaw =
-    (allocated * BigInt(aprBps as number) * cappedElapsed) / (365n * 24n * 60n * 60n * 10_000n);
-  // Sepolia demo: real APR math on ~100 tokens over minutes is dust (< 1e-8). Floor to
-  // 1 full underlying unit so Harvestable surplus / encrypt prize is visible in the UI.
-  const minDemoDrip = 10n ** 6n;
-  const amount = amountRaw < minDemoDrip ? minDemoDrip : amountRaw;
-  if (amountRaw < minDemoDrip) {
-    log(
-      `yield.accrue: APR math gave ${amountRaw} wei (dust) — using demo floor ${minDemoDrip} (1 token)`,
-    );
-  }
-
-  const owner = walletClient.account!.address;
-  const assetAddr = asset as `0x${string}`;
-
-  try {
-    try {
-      const mintHash = await walletClient.writeContract({
-        address: assetAddr,
-        abi: ERC20_ABI,
-        functionName: 'mint',
-        args: [owner, amount],
-        account: walletClient.account!,
-        chain: sepolia,
-      });
-      await publicClient.waitForTransactionReceipt({ hash: mintHash });
-    } catch {
-      const bal = (await publicClient.readContract({
-        address: assetAddr,
-        abi: ERC20_ABI,
-        functionName: 'balanceOf',
-        args: [owner],
-      })) as bigint;
-      if (bal < amount) {
-        log(`yield.accrue: skip — need ${amount} underlying, wallet has ${bal}`);
-        return;
-      }
-    }
-
-    const approveHash = await walletClient.writeContract({
-      address: assetAddr,
-      abi: ERC20_ABI,
-      functionName: 'approve',
-      args: [yieldVault, amount],
-      account: walletClient.account!,
-      chain: sepolia,
-    });
-    await publicClient.waitForTransactionReceipt({ hash: approveHash });
-
-    const accrueHash = await walletClient.writeContract({
-      address: yieldVault,
-      abi: YIELD_ABI,
-      functionName: 'accrue',
-      args: [amount],
-      account: walletClient.account!,
-      chain: sepolia,
-    });
-    await publicClient.waitForTransactionReceipt({ hash: accrueHash });
-    log(`yield.accrue: dripped ${amount} underlying (${accrueHash})`);
-  } catch (error) {
-    if (isSoftSkip(error)) {
-      log(`yield.accrue: soft skip — ${describe(error)}`);
-      return;
-    }
-    throw error;
-  }
-}
-
-function parsePrincipalRevealHandle(receipt: TransactionReceipt): Hex | null {
-  for (const logItem of receipt.logs) {
-    try {
-      const decoded = decodeEventLog({
-        abi: VAULT_ABI,
-        data: logItem.data,
-        topics: logItem.topics,
-      });
-      if (decoded.eventName === 'TotalPrincipalRevealRequested' && decoded.args.handle) {
-        return decoded.args.handle as Hex;
-      }
-    } catch {
-      /* next */
-    }
-  }
-  return null;
-}
-
-function parseUnwrapBurntHandle(
-  receipt: TransactionReceipt,
-  cToken: `0x${string}`,
-): Hex | null {
-  const tokenLower = cToken.toLowerCase();
-  for (const logItem of receipt.logs) {
-    if (logItem.address.toLowerCase() !== tokenLower) continue;
-    try {
-      const decoded = decodeEventLog({
-        abi: ERC7984_ABI,
-        data: logItem.data,
-        topics: logItem.topics,
-      });
-      if (decoded.eventName === 'UnwrapRequested' && decoded.args.amount) {
-        return decoded.args.amount as Hex;
-      }
-    } catch {
-      /* next */
-    }
-  }
-  return null;
+  log(`accrue: batch ${pending.length} of draw #${drawCount}…`);
+  const hash = await walletClient.writeContract({
+    ...vault,
+    functionName: 'accrueMany',
+    args: [pending, drawCount],
+    account: walletClient.account!,
+    chain: sepolia,
+  });
+  await publicClient.waitForTransactionReceipt({ hash });
+  log(`accrue: confirmed ${hash}`);
 }
 
 function isSoftSkip(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /DrawTooEarly|PrizeNotConfigured|PrizeReserveNotFunded|NoDepositors|NoYieldToHarvest|YieldVaultNotSet|NothingToAccrue|RevealAlreadyRequested|AllocateInFlight|DepositWindowStillOpen|DepositWindowNotOpen|DepositWindowClosed/i.test(
+  return /TooSoon|NothingStaked|PreviousDrawUnresolved|PrizeTiersNotSet|DrawNotOpen|DrawNotRevealed/i.test(
     message,
   );
 }

@@ -14,11 +14,8 @@ type RawLog = {
 /** Every event carries exactly one handle, under a name that varies by event. */
 function handleOf(args: Record<string, unknown>): string | null {
   const handle =
-    args.newBalanceHandle ??
     args.amountHandle ??
-    args.encryptedPrizeHandle ??
     args.newReserveHandle ??
-    args.prizeHandle ??
     args.totalPaidHandle;
   return typeof handle === 'string' ? handle : null;
 }
@@ -114,6 +111,16 @@ export async function scanRange(
     );
 }
 
+/** viem returns uint32 as number and larger ints as bigint — accept both. */
+function asDrawId(value: unknown): number | null {
+  if (typeof value === 'bigint') return Number(value);
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))) {
+    return Number(value);
+  }
+  return null;
+}
+
 function toRow(
   config: Config,
   eventType: EventType,
@@ -122,7 +129,7 @@ function toRow(
 ): VaultEventRow {
   const args = log.args ?? {};
   const account = typeof args.account === 'string' ? args.account.toLowerCase() : null;
-  const drawId = typeof args.drawId === 'bigint' ? Number(args.drawId) : null;
+  const drawId = asDrawId(args.drawId);
   const timestamp = timestamps.get(log.blockNumber);
 
   return {

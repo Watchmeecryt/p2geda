@@ -16,7 +16,7 @@ import type { IconSvgElement } from '@hugeicons/react';
 import { BrandMark } from '@/components/Brand';
 import { NetworkBanner } from '@/components/layout/NetworkBanner';
 import { useIsAdmin, usePoolStats } from '@/hooks/usePoolData';
-import { useCountdown } from '@/hooks/useCountdown';
+import { useNextOpenRemaining } from '@/hooks/useCountdown';
 import { formatCountdown } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -25,7 +25,7 @@ type NavItem = { to: string; label: string; icon: IconSvgElement; end?: boolean;
 const NAV: NavItem[] = [
   { to: '/app', label: 'Pool', icon: SafeIcon, end: true, hint: 'Deposit and withdraw' },
   { to: '/app/draws', label: 'Draws', icon: DiceIcon, hint: 'Next draw and claims' },
-  { to: '/app/history', label: 'History', icon: Analytics01Icon, hint: 'Your activity' },
+  { to: '/app/history', label: 'History', icon: Analytics01Icon, hint: 'Global + yours' },
   { to: '/app/metrics', label: 'Metrics', icon: ChartIncreaseIcon, hint: 'Public TVL and prizes' },
 ];
 
@@ -243,15 +243,14 @@ function RailLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void
   );
 }
 
-/** Header countdown only for a real keeper-scheduled bus draw — not idle admin windows. */
+/** Header countdown toward the next permissionless openDraw. */
 function DrawPill({ compact = false }: { compact?: boolean }) {
-  const { nextDrawAt, drawsCompleted, depositWindowClosesAt, lastDrawAt } = usePoolStats();
-  const remaining = useCountdown(nextDrawAt);
-  const idleNoBus = depositWindowClosesAt === 0n && lastDrawAt > 0n;
+  const stats = usePoolStats();
+  const { remaining, awaitingReveal } = useNextOpenRemaining(stats);
 
-  if (!nextDrawAt || idleNoBus) return null;
+  if (!stats.tiersConfigured || stats.depositorCount === 0n) return null;
 
-  const ready = remaining <= 0;
+  const ready = !awaitingReveal && remaining <= 0;
 
   return (
     <span
@@ -270,11 +269,11 @@ function DrawPill({ compact = false }: { compact?: boolean }) {
         <span className={cn('size-2 rounded-full', ready ? 'bg-accent' : 'bg-[rgba(0,0,0,0.25)]')} />
       </span>
       <span className="numeral text-[12px] font-bold text-ink sm:text-[13px]">
-        {ready ? 'Ready' : formatCountdown(remaining)}
+        {awaitingReveal ? 'Reveal' : ready ? 'Ready' : formatCountdown(remaining)}
       </span>
       {!compact ? (
         <span className="text-[11px] font-bold text-hint max-xl:hidden">
-          {`#${Number(drawsCompleted) + 1}`}
+          {`#${Number(stats.drawCount) + 1}`}
         </span>
       ) : null}
     </span>

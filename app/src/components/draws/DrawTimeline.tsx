@@ -52,18 +52,22 @@ export function DrawTimeline({ wins }: { wins: WinEntry[] }) {
       ) : (
         <ol>
           {draws.map((draw) => {
-            const drawId = Number(draw.drawId ?? 0n);
-            const win = winByDraw.get(drawId);
+            const drawId =
+              draw.drawId === undefined || draw.drawId === null
+                ? null
+                : Number(draw.drawId);
+            const win = drawId !== null ? winByDraw.get(drawId) : undefined;
             const timestamp = draw.timestamp ?? timestampOf(draw.blockNumber);
+            const label = drawId !== null ? String(drawId) : '—';
 
             return (
               <li key={draw.id} className="data-row flex-wrap">
                 <span className="icon-tile size-9 text-[0.8rem] font-bold text-ink">
-                  {drawId}
+                  {label}
                 </span>
 
                 <div className="min-w-0 flex-1">
-                  <p className="text-[0.88rem] font-semibold text-ink">Draw #{drawId}</p>
+                  <p className="text-[0.88rem] font-semibold text-ink">Draw #{label}</p>
                   <p className="text-[0.76rem] text-hint">
                     {timestamp ? formatRelativeTime(timestamp) : `block ${draw.blockNumber}`}
                   </p>

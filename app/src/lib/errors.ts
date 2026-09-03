@@ -9,18 +9,22 @@ function describeVaultError(name: string, args: readonly unknown[]): string {
       return 'Only accounts with a deposit can do this. Deposit into the pool first.';
     case 'DepositorLimitReached':
       return `This pool is full for the testnet run (${MAX_DEPOSITORS} depositors max).`;
-    case 'PrizeNotConfigured':
-      return 'The admin has not set a prize per draw yet.';
-    case 'PrizeReserveNotFunded':
-      return 'The prize reserve is empty. The admin needs to fund it before a draw.';
-    case 'NoDepositors':
+    case 'PrizeTiersNotSet':
+      return 'Prize tiers are not configured on this vault yet.';
+    case 'NothingStaked':
       return 'Nobody has deposited yet, so there is nothing to draw for.';
-    case 'DrawTooEarly': {
+    case 'PreviousDrawUnresolved':
+      return 'The previous draw is still open. Wait for reveal (or cancel after 24h).';
+    case 'TooSoon': {
       const nextAt = Number(args[0] ?? 0);
       return nextAt
         ? `Too early for the next draw. It unlocks at ${formatTimestamp(nextAt)}.`
         : 'Too early for the next draw.';
     }
+    case 'DrawNotOpen':
+      return 'That draw is not open for reveal.';
+    case 'DrawNotRevealed':
+      return 'That draw has not been revealed yet — wait for the keeper.';
     case 'OnlyOwnerMayFundReserve':
       return 'Only the pool admin can fund the prize reserve.';
     case 'RevealThresholdNotMet': {

@@ -2,24 +2,22 @@
   "chainId": 11155111,
   "network": "sepolia",
   "deployer": "0xf2fa17aAbA2a45Dc1184Bf212c7AA3b923f36bC9",
-  "vault": "0xdcD95B91EEadF241B7ce8c899272E164bFc2A4B2",
-  "yieldVault": "0x7f3fFa3d8F80477134b2D9a802c85BAbf50a0187",
+  "vault": "0x335339161E31fD94fF5A5d0595eC7526AFe9373F",
+  "confidentialVaultSource": "0xf0150cC2297065f28f41D9cf481F3aE9D6028923",
   "underlyingToken": "0x9b5Cd13b8eFbB58Dc25A05CF411D8056058aDFfF",
   "confidentialToken": "0x7c5BF43B851c1dff1a4feE8dB225b87f2C223639",
-  "depositWindow": 120,
-  "drawInterval": 60,
-  "yieldAprBps": 8000,
-  "deploymentBlock": 11404729,
-  "deployTx": "0x8dbc9190e1c5804875fb5834a44413da0686321d3a4b07c069409111eb6bb0da",
-  "deployedAt": "2026-08-02T17:03:01.000Z",
-  "features": [
-    "updatable minDrawsBeforePublicReveal / minDepositsBeforePublicTvlReveal",
-    "requestPublicTvlReveal",
-    "permissionless bus draw() after window close + drawInterval",
-    "idle redraw: lastDrawAt + drawInterval without new deposit bus (owner-only)",
-    "drawInterval 60s for faster reviewer demos"
-  ],
-  "note": "Batch deposit window + delayed draw. Update VITE_CONFIPOOL_VAULT_ADDRESS and indexer VAULT_ADDRESS / DEPLOYMENT_BLOCK.",
-  "previousVault": "0x6E20A73be3e2913b964a2e5a2E4DB46140E8824A",
-  "previousYieldVault": "0x5303086C213e6B5703Db77ba87c030De019dA6BE"
+  "minPeriod": 120,
+  "tiers": {
+    "apex": "100000000",
+    "pulse": "25000000",
+    "ripple": "5000000",
+    "k": [
+      100,
+      10,
+      1
+    ]
+  },
+  "deployedAt": "2026-09-02T19:40:41.997Z",
+  "transactionHash": "0x39b6835f91f669bb7f84ab6df35103c21b1a9e79d011e7587c5bc9c40af5d760",
+  "note": "V5 TWAB vault. Attach ConfidentialVaultSource with deploy:vault-source:sepolia VAULT_ADDRESS=…"
 }

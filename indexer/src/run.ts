@@ -26,7 +26,8 @@ async function main() {
 
   log(
     `indexing vault ${config.vaultAddress} on chain ${config.chainId} ` +
-      `(chunk ${config.logChunk}, ${config.confirmations} confirmations)`,
+      `(chunk ${config.logChunk}, ${config.confirmations} confirmations` +
+      `${FROM_DEPLOYMENT ? ', backfill from deployment' : ', live at chain tip'})`,
   );
 
   if (ONCE) {
@@ -76,12 +77,17 @@ async function runOnce(config: Config, db: SupabaseClient, client: PublicClient)
   const tip = await client.getBlockNumber();
   const safeTip = tip > config.confirmations ? tip - config.confirmations : 0n;
 
-  const cursor = FROM_DEPLOYMENT ? null : await readCursor(db, config);
-  const fromBlock = cursor === null ? config.deploymentBlock : cursor + 1n;
+  const storedCursor = await readCursor(db, config);
+  const fromBlock = resolveFromBlock(config, storedCursor, safeTip, FROM_DEPLOYMENT);
 
   if (fromBlock > safeTip) {
-    log(`up to date at block ${safeTip}`);
+    log(`live at block ${safeTip} (chain tip ${tip}, ${config.confirmations} confirmations)`);
     return;
+  }
+
+  const gap = safeTip - fromBlock + 1n;
+  if (gap > 50n && !FROM_DEPLOYMENT) {
+    log(`catching up ${gap} block(s) from ${fromBlock} → ${safeTip}…`);
   }
 
   const startingDrawId = await readLatestDrawIdBefore(db, config, fromBlock);
@@ -93,8 +99,24 @@ async function runOnce(config: Config, db: SupabaseClient, client: PublicClient)
 
   log(
     `blocks ${fromBlock}-${safeTip}: ${written} event(s) indexed` +
-      (claimsWritten > 0 ? `, ${claimsWritten} prize claim(s)` : ''),
+      (claimsWritten > 0 ? `, ${claimsWritten} prize claim(s)` : '') +
+      ` · live at ${safeTip}`,
   );
+}
+
+/**
+ * Live indexer starts at the current safe tip — it does not replay from deployment.
+ * Use `npm run backfill` (--from-deployment) when you intentionally want full history.
+ */
+function resolveFromBlock(
+  config: Config,
+  cursor: bigint | null,
+  safeTip: bigint,
+  fromDeployment: boolean,
+): bigint {
+  if (fromDeployment) return config.deploymentBlock;
+  if (cursor !== null) return cursor + 1n;
+  return safeTip;
 }
 
 function sleep(ms: number) {

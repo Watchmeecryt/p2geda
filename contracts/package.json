@@ -10,7 +10,7 @@
     "test": "hardhat test",
     "test:vault": "hardhat test test/ConfidentialPrizeVault.ts",
     "deploy:sepolia": "hardhat run scripts/deploy-sepolia.ts --network sepolia",
-    "deploy:yield:sepolia": "hardhat run scripts/deploy-yield-sepolia.ts --network sepolia",
+    "deploy:vault-source:sepolia": "hardhat run scripts/deploy-vault-source-sepolia.ts --network sepolia",
     "verify:sepolia": "hardhat run scripts/verify-deployment.ts --network sepolia"
   },
   "keywords": [

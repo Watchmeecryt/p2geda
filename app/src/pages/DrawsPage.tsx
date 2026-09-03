@@ -1,42 +1,44 @@
 import { useCallback } from 'react';
-import { useAccount } from 'wagmi';
-import { HugeiconsIcon } from '@hugeicons/react';
-import { DiceIcon, Key01Icon, SquareLock02Icon } from '@hugeicons/core-free-icons';
+import { useAccount, useReadContract } from 'wagmi';
+import { sepolia } from 'viem/chains';
 import { ConnectPrompt } from '@/components/layout/ConnectPrompt';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Card } from '@/components/ui/Card';
 import { ClaimCard } from '@/components/draws/ClaimCard';
 import { NextDrawCard } from '@/components/draws/NextDrawCard';
 import { DrawTimeline } from '@/components/draws/DrawTimeline';
 import { WinnerModal } from '@/components/draws/WinnerModal';
+import { FheDrawExplainer } from '@/components/pool/HowItWorksCard';
+import { Button } from '@/components/ui/Button';
 import { useConfiPoolActions } from '@/hooks/useConfiPoolActions';
 import { usePoolStats, useUserPosition } from '@/hooks/usePoolData';
 import { usePrivateView } from '@/hooks/usePrivateView';
 import { useWinJournal } from '@/hooks/useWinJournal';
-
-const FAIRNESS_POINTS = [
-  {
-    icon: DiceIcon,
-    title: 'Randomness comes from the chain',
-    body: 'Each draw calls FHE.randEuint64() inside the contract. There is no offchain RNG, no seed the admin supplies, and no value anyone can observe before the draw settles.',
-  },
-  {
-    icon: SquareLock02Icon,
-    title: 'Weighting happens on ciphertexts',
-    body: 'The contract walks depositors, adds each encrypted balance to a running total, and selects the first whose cumulative range contains the random ticket. Balances are never decrypted to do it.',
-  },
-  {
-    icon: Key01Icon,
-    title: 'Only the winner learns the result',
-    body: 'The payout is added to an encrypted claimable balance, readable by that depositor alone. Everyone else adds an encrypted zero, so the transaction pattern gives nothing away.',
-  },
-];
+import { DRAW_STATUS, VAULT_ABI, VAULT_ADDRESS } from '@/lib/contracts';
 
 export function DrawsPage() {
-  const { isConnected } = useAccount();
+  const { address, isConnected } = useAccount();
   const stats = usePoolStats();
   const position = useUserPosition();
   const actions = useConfiPoolActions();
+
+  const awaitingAccrual =
+    stats.currentDrawStatus === DRAW_STATUS.Revealed &&
+    stats.currentDrawId > 0 &&
+    position.isDepositor;
+
+  const { data: alreadyAccruedRaw } = useReadContract({
+    address: VAULT_ADDRESS,
+    abi: VAULT_ABI,
+    chainId: sepolia.id,
+    functionName: 'accrued',
+    args: [stats.currentDrawId, address ?? '0x0'],
+    query: {
+      enabled: Boolean(address && awaitingAccrual),
+      refetchInterval: 12_000,
+    },
+  });
+
+  const showAccrueFallback = awaitingAccrual && alreadyAccruedRaw === false;
 
   const view = usePrivateView({
     vaultHandles: [position.balanceHandle, position.claimableHandle],
@@ -58,27 +60,35 @@ export function DrawsPage() {
     }
   }, [actions, journal, position]);
 
-  const runDraw = useCallback(async () => {
-    if (await actions.triggerDraw()) {
+  const runOpenDraw = useCallback(async () => {
+    if (await actions.openDraw()) {
       stats.refetch();
       position.refetch();
     }
   }, [actions, stats, position]);
+
+  const runAccrue = useCallback(async () => {
+    if (stats.currentDrawId <= 0) return;
+    if (await actions.accrueSelf(stats.currentDrawId)) {
+      position.refetch();
+    }
+  }, [actions, stats.currentDrawId, position]);
 
   return (
     <div>
       <PageHeader
         kicker="Draws"
         title="Provably fair, completely private"
-        description="At every interval the pool awards its prize to one depositor, weighted by deposit size and selected onchain over encrypted balances."
+        description="Every window awards Apex / Pulse / Ripple over encrypted time-weighted balances. Only R and total weight become public."
       />
 
       {!isConnected ? (
         <div className="mt-8 grid gap-5">
           <NextDrawCard stats={stats} />
+          <FheDrawExplainer />
           <ConnectPrompt
-            title="Connect to draw or claim"
-            description="When the countdown hits zero, any connected wallet can draw a winner. Connect to run the draw, reveal your encrypted prize balance, and claim."
+            title="Connect to open or claim"
+            description="When the countdown hits zero, any connected wallet can open a draw. Connect to participate and claim privately."
           />
         </div>
       ) : (
@@ -86,44 +96,46 @@ export function DrawsPage() {
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] lg:items-start">
             <NextDrawCard
               stats={stats}
-              canDraw
-              drawing={actions.activeAction === 'draw'}
-              onDraw={runDraw}
+              canOpen
+              opening={actions.activeAction === 'openDraw'}
+              onOpenDraw={runOpenDraw}
             />
-            <ClaimCard
-              view={view}
-              claimable={claimable}
-              isDepositor={position.isDepositor}
-              busy={actions.activeAction === 'claim'}
-              onClaim={claim}
-            />
+            <div className="grid gap-5">
+              <ClaimCard
+                view={view}
+                claimable={claimable}
+                isDepositor={position.isDepositor}
+                busy={actions.activeAction === 'claim'}
+                onClaim={claim}
+              />
+              {showAccrueFallback ? (
+                <Button
+                  variant="secondary"
+                  loading={actions.activeAction === 'accrue'}
+                  disabled={actions.isRunning}
+                  onClick={() => void runAccrue()}
+                >
+                  Accrue my prizes for draw #{stats.currentDrawId}
+                </Button>
+              ) : null}
+              {awaitingAccrual && alreadyAccruedRaw === true ? (
+                <p className="text-center text-[0.78rem] leading-relaxed text-hint">
+                  The keeper already accrued draw #{stats.currentDrawId} for your wallet. Reveal
+                  amounts to see if you won, then claim.
+                </p>
+              ) : null}
+            </div>
           </div>
 
           <DrawTimeline wins={journal.wins} />
+          <FheDrawExplainer />
         </div>
       )}
-
-      <Card className="mt-5">
-        <h3 className="font-bold">How winner selection stays fair</h3>
-        <div className="mt-5 grid gap-5 sm:grid-cols-3">
-          {FAIRNESS_POINTS.map((point) => (
-            <div key={point.title}>
-              <div className="icon-tile size-9">
-                <HugeiconsIcon icon={point.icon} size={17} aria-hidden />
-              </div>
-              <p className="mt-3 text-[0.9rem] font-bold">{point.title}</p>
-              <p className="mt-1.5 text-[0.82rem] leading-relaxed text-muted">
-                {point.body}
-              </p>
-            </div>
-          ))}
-        </div>
-      </Card>
 
       <WinnerModal
         win={journal.celebrating}
         onClose={journal.dismissCelebration}
-        onClaim={claim}
+        onClaim={() => void claim()}
         claiming={actions.activeAction === 'claim'}
       />
     </div>

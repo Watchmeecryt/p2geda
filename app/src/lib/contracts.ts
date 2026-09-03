@@ -10,15 +10,16 @@ function envAddress(raw: string | undefined, fallback: Address): Address {
   }
 }
 
+/** Live V5 TWAB vault (Sepolia 2026-09-02). */
 export const VAULT_ADDRESS = envAddress(
   import.meta.env.VITE_CONFIPOOL_VAULT_ADDRESS,
-  '0xdcD95B91EEadF241B7ce8c899272E164bFc2A4B2',
+  '0x335339161E31fD94fF5A5d0595eC7526AFe9373F',
 );
 
-/** MockYield4626 (Morpho-like). Zero address means the live vault has no yield wired yet. */
+/** ConfidentialVaultSource adapter (Morpho/Zama batchers + demo rateBps pot). */
 export const YIELD_VAULT_ADDRESS = envAddress(
   import.meta.env.VITE_YIELD_VAULT_ADDRESS,
-  '0x7f3fFa3d8F80477134b2D9a802c85BAbf50a0187',
+  '0xf0150cC2297065f28f41D9cf481F3aE9D6028923',
 );
 
 export const YIELD_VAULT_CONFIGURED =
@@ -45,8 +46,16 @@ export const WRAP_RATE = 10n ** BigInt(UNDERLYING_DECIMALS - CONFIDENTIAL_DECIMA
 export const UNDERLYING_SYMBOL = 'USDC';
 export const CONFIDENTIAL_SYMBOL = 'cUSDC';
 
-/** Maximum depositors per deposit bus (matches vault source). */
+/** Soft cap for depositor enumeration (matches vault). */
 export const MAX_DEPOSITORS = 256n;
+
+/** DrawStatus enum on ConfidentialPrizeVault. */
+export const DRAW_STATUS = {
+  None: 0,
+  Open: 1,
+  Revealed: 2,
+  Cancelled: 3,
+} as const;
 
 /** An uninitialized euint64 handle reads back as 32 zero bytes. */
 export const UNINITIALIZED_HANDLE =
@@ -148,59 +157,31 @@ export const VAULT_ABI = [
   },
   {
     type: 'function',
-    name: 'drawInterval',
+    name: 'minPeriod',
     stateMutability: 'view',
     inputs: [],
-    outputs: [{ type: 'uint256' }],
+    outputs: [{ type: 'uint40' }],
   },
   {
     type: 'function',
-    name: 'depositWindowDuration',
+    name: 'genesis',
     stateMutability: 'view',
     inputs: [],
-    outputs: [{ type: 'uint256' }],
+    outputs: [{ type: 'uint40' }],
   },
   {
     type: 'function',
-    name: 'depositWindowOpensAt',
+    name: 'nextOpenableAt',
     stateMutability: 'view',
     inputs: [],
-    outputs: [{ type: 'uint256' }],
+    outputs: [{ type: 'uint40' }],
   },
   {
     type: 'function',
-    name: 'depositWindowClosesAt',
+    name: 'drawCount',
     stateMutability: 'view',
     inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'depositsOpen',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'bool' }],
-  },
-  {
-    type: 'function',
-    name: 'nextDrawAt',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'lastDrawAt',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'drawsCompleted',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
+    outputs: [{ type: 'uint32' }],
   },
   {
     type: 'function',
@@ -218,31 +199,59 @@ export const VAULT_ABI = [
   },
   {
     type: 'function',
-    name: 'prizePerDrawConfigured',
+    name: 'MAX_DEPOSITORS',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'MAX_ACCRUE_BATCH',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'tiersConfigured',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'bool' }],
   },
   {
     type: 'function',
-    name: 'prizeReserveFunded',
+    name: 'apexPrize',
     stateMutability: 'view',
     inputs: [],
-    outputs: [{ type: 'bool' }],
+    outputs: [{ type: 'uint64' }],
   },
   {
     type: 'function',
-    name: 'lastTotalPaidRevealHandle',
+    name: 'tierPrize',
+    stateMutability: 'view',
+    inputs: [{ name: '', type: 'uint256' }],
+    outputs: [{ type: 'uint64' }],
+  },
+  {
+    type: 'function',
+    name: 'tierK',
+    stateMutability: 'view',
+    inputs: [{ name: '', type: 'uint256' }],
+    outputs: [{ type: 'uint128' }],
+  },
+  {
+    type: 'function',
+    name: 'RESERVE_DEPOSIT_TAG',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'bytes32' }],
   },
   {
     type: 'function',
-    name: 'lastPublicTvlRevealHandle',
+    name: 'yieldSource',
     stateMutability: 'view',
     inputs: [],
-    outputs: [{ type: 'bytes32' }],
+    outputs: [{ type: 'address' }],
   },
   {
     type: 'function',
@@ -253,35 +262,7 @@ export const VAULT_ABI = [
   },
   {
     type: 'function',
-    name: 'minDepositsBeforePublicTvlReveal',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'setMinDrawsBeforePublicReveal',
-    stateMutability: 'nonpayable',
-    inputs: [{ name: 'value', type: 'uint256' }],
-    outputs: [],
-  },
-  {
-    type: 'function',
-    name: 'setMinDepositsBeforePublicTvlReveal',
-    stateMutability: 'nonpayable',
-    inputs: [{ name: 'value', type: 'uint256' }],
-    outputs: [],
-  },
-  {
-    type: 'function',
-    name: 'MAX_DEPOSITORS',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'RESERVE_DEPOSIT_TAG',
+    name: 'lastTotalPaidRevealHandle',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'bytes32' }],
@@ -302,21 +283,14 @@ export const VAULT_ABI = [
   },
   {
     type: 'function',
+    name: 'confidentialWinningsOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ type: 'bytes32' }],
+  },
+  {
+    type: 'function',
     name: 'confidentialPrizeReserve',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'bytes32' }],
-  },
-  {
-    type: 'function',
-    name: 'confidentialPrizePerDraw',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'bytes32' }],
-  },
-  {
-    type: 'function',
-    name: 'confidentialTotalPrincipal',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'bytes32' }],
@@ -330,13 +304,28 @@ export const VAULT_ABI = [
   },
   {
     type: 'function',
-    name: 'setPrizePerDraw',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'encryptedAmount', type: 'bytes32' },
-      { name: 'inputProof', type: 'bytes' },
+    name: 'drawAt',
+    stateMutability: 'view',
+    inputs: [{ name: 'drawId', type: 'uint32' }],
+    outputs: [
+      { name: 'periodStart', type: 'uint40' },
+      { name: 'snapshotAt', type: 'uint40' },
+      { name: 'status', type: 'uint8' },
+      { name: 'encR', type: 'bytes32' },
+      { name: 'encTotalWeight', type: 'bytes32' },
+      { name: 'r', type: 'uint64' },
+      { name: 'totalWeight', type: 'uint128' },
     ],
-    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'accrued',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'drawId', type: 'uint32' },
+      { name: 'account', type: 'address' },
+    ],
+    outputs: [{ type: 'bool' }],
   },
   {
     type: 'function',
@@ -348,7 +337,6 @@ export const VAULT_ABI = [
     ],
     outputs: [{ type: 'bytes32' }],
   },
-  { type: 'function', name: 'draw', stateMutability: 'nonpayable', inputs: [], outputs: [] },
   {
     type: 'function',
     name: 'claim',
@@ -358,33 +346,86 @@ export const VAULT_ABI = [
   },
   {
     type: 'function',
+    name: 'openDraw',
+    stateMutability: 'nonpayable',
+    inputs: [],
+    outputs: [{ type: 'uint32' }],
+  },
+  {
+    type: 'function',
+    name: 'revealDraw',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'drawId', type: 'uint32' },
+      { name: 'cleartexts', type: 'bytes' },
+      { name: 'decryptionProof', type: 'bytes' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'cancelDraw',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'drawId', type: 'uint32' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'accrue',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'user', type: 'address' },
+      { name: 'drawId', type: 'uint32' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'accrueMany',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'users', type: 'address[]' },
+      { name: 'drawId', type: 'uint32' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'harvest',
+    stateMutability: 'nonpayable',
+    inputs: [],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'setMinDrawsBeforePublicReveal',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'value', type: 'uint256' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
     name: 'requestTotalPrizesPaidReveal',
     stateMutability: 'nonpayable',
     inputs: [],
     outputs: [{ type: 'bytes32' }],
   },
   {
-    type: 'function',
-    name: 'requestPublicTvlReveal',
-    stateMutability: 'nonpayable',
-    inputs: [],
-    outputs: [{ type: 'bytes32' }],
-  },
-
-  {
     type: 'event',
-    name: 'DepositRecorded',
+    name: 'Deposited',
     inputs: [
       { name: 'account', type: 'address', indexed: true },
-      { name: 'newBalanceHandle', type: 'bytes32', indexed: true },
+      { name: 'timestamp', type: 'uint40', indexed: false },
+      { name: 'observationIndex', type: 'uint256', indexed: false },
     ],
   },
   {
     type: 'event',
-    name: 'WithdrawalRequested',
+    name: 'Withdrawn',
     inputs: [
       { name: 'account', type: 'address', indexed: true },
-      { name: 'amountHandle', type: 'bytes32', indexed: true },
+      { name: 'timestamp', type: 'uint40', indexed: false },
+      { name: 'observationIndex', type: 'uint256', indexed: false },
     ],
   },
   {
@@ -394,15 +435,28 @@ export const VAULT_ABI = [
   },
   {
     type: 'event',
-    name: 'PrizePerDrawConfigured',
-    inputs: [{ name: 'prizeHandle', type: 'bytes32', indexed: true }],
+    name: 'DrawOpened',
+    inputs: [
+      { name: 'drawId', type: 'uint32', indexed: true },
+      { name: 'periodStart', type: 'uint40', indexed: false },
+      { name: 'snapshotAt', type: 'uint40', indexed: false },
+    ],
   },
   {
     type: 'event',
-    name: 'DrawCompleted',
+    name: 'DrawRevealed',
     inputs: [
-      { name: 'drawId', type: 'uint256', indexed: true },
-      { name: 'encryptedPrizeHandle', type: 'bytes32', indexed: true },
+      { name: 'drawId', type: 'uint32', indexed: true },
+      { name: 'r', type: 'uint64', indexed: false },
+      { name: 'totalWeight', type: 'uint128', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'Accrued',
+    inputs: [
+      { name: 'account', type: 'address', indexed: true },
+      { name: 'drawId', type: 'uint32', indexed: true },
     ],
   },
   {
@@ -417,17 +471,17 @@ export const VAULT_ABI = [
     type: 'event',
     name: 'TotalPrizesPaidRevealRequested',
     inputs: [
-      { name: 'drawId', type: 'uint256', indexed: true },
+      { name: 'drawId', type: 'uint32', indexed: true },
       { name: 'totalPaidHandle', type: 'bytes32', indexed: true },
     ],
   },
-
   { type: 'error', name: 'DepositorLimitReached', inputs: [] },
-  { type: 'error', name: 'PrizeNotConfigured', inputs: [] },
-  { type: 'error', name: 'PrizeReserveNotFunded', inputs: [] },
-  { type: 'error', name: 'NoDepositors', inputs: [] },
-  { type: 'error', name: 'DrawTooEarly', inputs: [{ name: 'nextDrawAt', type: 'uint256' }] },
-  { type: 'error', name: 'OnlyDepositor', inputs: [{ name: 'caller', type: 'address' }] },
+  { type: 'error', name: 'NothingStaked', inputs: [] },
+  { type: 'error', name: 'PreviousDrawUnresolved', inputs: [] },
+  { type: 'error', name: 'TooSoon', inputs: [{ name: 'openableAt', type: 'uint40' }] },
+  { type: 'error', name: 'DrawNotOpen', inputs: [] },
+  { type: 'error', name: 'DrawNotRevealed', inputs: [] },
+  { type: 'error', name: 'PrizeTiersNotSet', inputs: [] },
   {
     type: 'error',
     name: 'OnlyOwnerMayFundReserve',
@@ -444,151 +498,62 @@ export const VAULT_ABI = [
   { type: 'error', name: 'RevealAlreadyRequested', inputs: [{ name: 'handle', type: 'bytes32' }] },
 ] as const;
 
-/** MockYield4626 (Morpho-like stand-in). */
-export const YIELD_VAULT_ABI = [
+/** ConfidentialVaultSource — Morpho/Zama composition adapter. */
+export const YIELD_SOURCE_ABI = [
   {
     type: 'function',
-    name: 'asset',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'address' }],
-  },
-  {
-    type: 'function',
-    name: 'totalAssets',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'totalSupply',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'balanceOf',
-    stateMutability: 'view',
-    inputs: [{ name: 'account', type: 'address' }],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'convertToAssets',
-    stateMutability: 'view',
-    inputs: [{ name: 'shares', type: 'uint256' }],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'previewDeposit',
-    stateMutability: 'view',
-    inputs: [{ name: 'assets', type: 'uint256' }],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'deposit',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'assets', type: 'uint256' },
-      { name: 'receiver', type: 'address' },
-    ],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'withdraw',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'assets', type: 'uint256' },
-      { name: 'receiver', type: 'address' },
-      { name: 'owner', type: 'address' },
-    ],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'accrue',
-    stateMutability: 'nonpayable',
-    inputs: [{ name: 'amount', type: 'uint256' }],
-    outputs: [],
-  },
-  {
-    type: 'function',
-    name: 'accrueElapsed',
-    stateMutability: 'nonpayable',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'aprBps',
+    name: 'rateBps',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'uint16' }],
   },
   {
     type: 'function',
-    name: 'lastAccrualAt',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
-] as const;
-
-/** Yield surface on ConfidentialPrizeVault (post yield redeploy). */
-export const VAULT_YIELD_ABI = [
-  {
-    type: 'function',
-    name: 'yieldVault',
+    name: 'controller',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'address' }],
   },
   {
     type: 'function',
-    name: 'allocatedUnderlying',
+    name: 'token',
     stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'depositBatcher',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'redeemBatcher',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'joinVault',
+    stateMutability: 'nonpayable',
     inputs: [],
     outputs: [{ type: 'uint256' }],
   },
   {
     type: 'function',
-    name: 'prizeShareBps',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'uint16' }],
-  },
-  {
-    type: 'function',
-    name: 'bootstrapAllocate',
+    name: 'claimShares',
     stateMutability: 'nonpayable',
-    inputs: [{ name: 'underlyingAmount', type: 'uint256' }],
+    inputs: [],
     outputs: [],
   },
   {
     type: 'function',
-    name: 'harvestClear',
+    name: 'harvest',
     stateMutability: 'nonpayable',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'requestTotalPrincipalReveal',
-    stateMutability: 'nonpayable',
-    inputs: [],
+    inputs: [{ name: 'to', type: 'address' }],
     outputs: [{ type: 'bytes32' }],
   },
-  {
-    type: 'function',
-    name: 'redeemFromYield',
-    stateMutability: 'nonpayable',
-    inputs: [{ name: 'underlyingAmount', type: 'uint256' }],
-    outputs: [],
-  },
 ] as const;
-

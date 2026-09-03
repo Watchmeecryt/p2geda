@@ -5,8 +5,8 @@ import { VAULT_ADDRESS } from '@/lib/contracts';
 import { SEPOLIA_CHAIN_ID } from '@/lib/chains';
 import { supabase, supabaseConfigured, type VaultEventRow } from '@/lib/supabase';
 
-/** Block the live USDC vault was deployed in; the RPC fallback starts here. */
-export const VAULT_DEPLOYMENT_BLOCK = 11_404_729n;
+/** Block the live V5 vault was deployed in; the RPC fallback starts here. */
+export const VAULT_DEPLOYMENT_BLOCK = 11_117_640n;
 
 /** Public RPCs cap eth_getLogs spans, so the fallback scan is chunked. */
 const LOG_CHUNK = 45_000n;
@@ -18,9 +18,10 @@ export type ActivityKind =
   | 'deposit'
   | 'withdrawal'
   | 'draw'
+  | 'reveal_draw'
+  | 'accrue'
   | 'claim'
   | 'reserve'
-  | 'prize_config'
   | 'reveal';
 
 export type ActivityEvent = {
@@ -55,8 +56,8 @@ export function usePoolActivity() {
         try {
           return await fetchIndexedActivity();
         } catch (error) {
-          if (!isSupabaseAuthError(error) || !publicClient) throw error;
-          console.warn('[history] Supabase auth failed; falling back to RPC logs.', error);
+          if (!isSupabaseUnavailable(error) || !publicClient) throw error;
+          console.warn('[history] Supabase unreachable; falling back to RPC logs.', error);
           return scanActivityFromRpc(publicClient);
         }
       }
@@ -82,9 +83,12 @@ async function fetchIndexedActivity(): Promise<ActivityEvent[]> {
   return (data ?? []).map(rowToEvent);
 }
 
-function isSupabaseAuthError(error: unknown): boolean {
+/** Auth failures and unreachable hosts both fall back to RPC log scanning. */
+function isSupabaseUnavailable(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /invalid api key|jwt|unauthorized|401/i.test(message);
+  return /invalid api key|jwt|unauthorized|401|failed to fetch|networkerror|err_name_not_resolved|name_not_resolved|enotfound|fetch failed|load failed|network request failed/i.test(
+    message,
+  );
 }
 
 function rowToEvent(row: VaultEventRow): ActivityEvent {
@@ -100,7 +104,7 @@ function rowToEvent(row: VaultEventRow): ActivityEvent {
     logIndex: row.log_index,
     account: (row.account_address as Address | null) ?? undefined,
     handle: (row.amount_handle as Hex | null) ?? undefined,
-    drawId: row.draw_id === null ? undefined : BigInt(row.draw_id),
+    drawId: coerceDrawId(row.draw_id),
     timestamp,
   };
 }
@@ -109,19 +113,21 @@ function rowToEvent(row: VaultEventRow): ActivityEvent {
 
 const EVENTS = {
   deposit: parseAbiItem(
-    'event DepositRecorded(address indexed account, bytes32 indexed newBalanceHandle)',
+    'event Deposited(address indexed account, uint40 timestamp, uint256 observationIndex)',
   ),
   withdrawal: parseAbiItem(
-    'event WithdrawalRequested(address indexed account, bytes32 indexed amountHandle)',
+    'event Withdrawn(address indexed account, uint40 timestamp, uint256 observationIndex)',
   ),
   draw: parseAbiItem(
-    'event DrawCompleted(uint256 indexed drawId, bytes32 indexed encryptedPrizeHandle)',
+    'event DrawOpened(uint32 indexed drawId, uint40 periodStart, uint40 snapshotAt)',
+  ),
+  reveal_draw: parseAbiItem(
+    'event DrawRevealed(uint32 indexed drawId, uint64 r, uint128 totalWeight)',
   ),
   claim: parseAbiItem('event PrizeClaimed(address indexed account, bytes32 indexed amountHandle)'),
   reserve: parseAbiItem('event PrizeReserveFunded(bytes32 indexed newReserveHandle)'),
-  prize_config: parseAbiItem('event PrizePerDrawConfigured(bytes32 indexed prizeHandle)'),
   reveal: parseAbiItem(
-    'event TotalPrizesPaidRevealRequested(uint256 indexed drawId, bytes32 indexed totalPaidHandle)',
+    'event TotalPrizesPaidRevealRequested(uint32 indexed drawId, bytes32 indexed totalPaidHandle)',
   ),
 } as const;
 
@@ -140,7 +146,7 @@ async function scanActivityFromRpc(client: RpcClient): Promise<ActivityEvent[]> 
 
   const collected = await Promise.all(
     ranges.flatMap((range) =>
-      (Object.entries(EVENTS) as Array<[ActivityKind, (typeof EVENTS)[ActivityKind]]>).map(
+      (Object.entries(EVENTS) as Array<[keyof typeof EVENTS, (typeof EVENTS)[keyof typeof EVENTS]]>).map(
         async ([kind, event]) => {
           const logs = await client.getLogs({ address: VAULT_ADDRESS, event, ...range });
           return (logs as AnyLog[]).map((log) => logToEvent(kind, log));
@@ -158,6 +164,15 @@ async function scanActivityFromRpc(client: RpcClient): Promise<ActivityEvent[]> 
     );
 }
 
+function coerceDrawId(value: unknown): bigint | undefined {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return BigInt(value);
+  if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))) {
+    return BigInt(value);
+  }
+  return undefined;
+}
+
 function logToEvent(kind: ActivityKind, log: AnyLog): ActivityEvent {
   const args = log.args ?? {};
   return {
@@ -167,13 +182,10 @@ function logToEvent(kind: ActivityKind, log: AnyLog): ActivityEvent {
     txHash: log.transactionHash,
     logIndex: log.logIndex,
     account: args.account as Address | undefined,
-    handle: (args.newBalanceHandle ??
-      args.amountHandle ??
-      args.encryptedPrizeHandle ??
-      args.newReserveHandle ??
-      args.prizeHandle ??
-      args.totalPaidHandle) as Hex | undefined,
-    drawId: args.drawId as bigint | undefined,
+    handle: (args.amountHandle ?? args.newReserveHandle ?? args.totalPaidHandle) as
+      | Hex
+      | undefined,
+    drawId: coerceDrawId(args.drawId),
   };
 }
 
@@ -230,8 +242,8 @@ export function useMyPrizeClaims() {
         try {
           return await fetchIndexedClaims(address);
         } catch (error) {
-          if (!isSupabaseAuthError(error) || !publicClient) throw error;
-          console.warn('[history] Supabase auth failed; falling back to RPC claim scan.', error);
+          if (!isSupabaseUnavailable(error) || !publicClient) throw error;
+          console.warn('[history] Supabase unreachable; falling back to RPC claim scan.', error);
           const activity = await scanActivityFromRpc(publicClient);
           return claimsFromActivity(activity, address);
         }

@@ -6,30 +6,22 @@ import { Card } from '@/components/ui/Card';
 import { AmountField } from '@/components/ui/AmountField';
 import { ConfidentialAmount } from '@/components/ConfidentialAmount';
 import { validateConfidentialInput } from '@/lib/errors';
-import { formatConfidential, formatCountdown, isPositiveAmount, parseConfidential } from '@/lib/format';
+import { formatConfidential, isPositiveAmount, parseConfidential } from '@/lib/format';
 import { CONFIDENTIAL_SYMBOL } from '@/lib/contracts';
 import type { PrivateView } from '@/hooks/usePrivateView';
-import { useCountdown } from '@/hooks/useCountdown';
 import { cn } from '@/lib/utils';
 
 type Mode = 'deposit' | 'withdraw';
 
 type Props = {
-  /** Any flow is running, so inputs lock. Does not drive the spinner. */
   busy: boolean;
   depositing: boolean;
   withdrawing: boolean;
   view: PrivateView;
-  /** Clear cUSDC wallet balance, or null while still encrypted to the viewer. */
   walletBalance: bigint | null;
-  /** Clear vault principal, or null while still encrypted to the viewer. */
   vaultBalance: bigint | null;
   decrypting: boolean;
   isDepositor: boolean;
-  /** True while the onchain deposit batch accepts new principal. */
-  depositsOpen: boolean;
-  /** Unix seconds when the current deposit window closes (0 = idle / waiting for first deposit). */
-  depositWindowClosesAt: bigint;
   onDeposit: (amount: bigint) => Promise<boolean>;
   onWithdraw: (amount: bigint) => Promise<boolean>;
   onDone: () => void;
@@ -44,32 +36,26 @@ export function DepositWithdrawCard({
   vaultBalance,
   decrypting,
   isDepositor,
-  depositsOpen,
-  depositWindowClosesAt,
   onDeposit,
   onWithdraw,
   onDone,
 }: Props) {
   const [mode, setMode] = useState<Mode>('deposit');
   const [amount, setAmount] = useState('');
-  const windowRemaining = useCountdown(depositWindowClosesAt);
 
   const isDeposit = mode === 'deposit';
   const available = isDeposit ? walletBalance : vaultBalance;
-  const depositBlocked = isDeposit && !depositsOpen;
 
   const validation = amount ? validateConfidentialInput(amount) : null;
   const parsed = isPositiveAmount(amount) ? parseConfidential(amount) : 0n;
   const overAvailable = available !== null && parsed > available;
   const error =
     validation ??
-    (depositBlocked
-      ? 'Deposit window is closed for this batch. Wait for the next bus after the draw.'
-      : overAvailable
-        ? isDeposit
-          ? 'That is more cUSDC than you hold. Wrap more first.'
-          : 'That is more than your pool principal.'
-        : null);
+    (overAvailable
+      ? isDeposit
+        ? 'That is more cUSDC than you hold. Wrap more first.'
+        : 'That is more than your pool principal.'
+      : null);
 
   const switchMode = (next: Mode) => {
     setMode(next);
@@ -99,22 +85,8 @@ export function DepositWithdrawCard({
 
       {isDeposit ? (
         <p className="mt-4 rounded-2xl border border-hairline bg-surface px-3.5 py-2.5 text-[0.78rem] leading-relaxed text-muted">
-          {depositWindowClosesAt === 0n ? (
-            <>
-              Deposit window idle. The <span className="font-semibold text-ink">first deposit</span> opens
-              a timed batch bus for everyone else.
-            </>
-          ) : depositsOpen ? (
-            <>
-              Deposit bus open — closes in{' '}
-              <span className="numeral font-semibold text-ink">{formatCountdown(windowRemaining)}</span>.
-              After it closes the keeper parks the aggregate in MockYield, then the draw runs.
-            </>
-          ) : (
-            <>
-              Deposit window closed for this batch. New deposits open again after the draw.
-            </>
-          )}
+          Deposits are always open. Your time-weighted balance earns draw weight until you withdraw.
+          Draws run about every 2 minutes once someone opens them.
         </p>
       ) : null}
 
@@ -125,13 +97,11 @@ export function DepositWithdrawCard({
           onChange={setAmount}
           symbol={CONFIDENTIAL_SYMBOL}
           error={error}
-          disabled={busy || depositBlocked || (!isDeposit && !isDepositor)}
+          disabled={busy || (!isDeposit && !isDepositor)}
           hint={
             <span className="inline-flex items-center gap-1">
               {isDeposit ? 'Wallet:' : 'In pool:'}
               {available === null ? (
-                // Decrypting here rather than sending the reader back to the
-                // sidebar: you cannot size a deposit against a hidden balance.
                 <button
                   type="button"
                   onClick={() => void view.toggle()}
@@ -158,9 +128,7 @@ export function DepositWithdrawCard({
 
       <div className="mt-4 note-block">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-[0.8rem] font-semibold text-muted">
-            {isDeposit ? 'Pool principal after' : 'Pool principal after'}
-          </span>
+          <span className="text-[0.8rem] font-semibold text-muted">Pool principal after</span>
           <ConfidentialAmount
             size="sm"
             decrypting={decrypting}
@@ -179,13 +147,7 @@ export function DepositWithdrawCard({
         className="mt-4"
         fullWidth
         loading={isDeposit ? depositing : withdrawing}
-        disabled={
-          busy ||
-          parsed === 0n ||
-          Boolean(error) ||
-          depositBlocked ||
-          (!isDeposit && !isDepositor)
-        }
+        disabled={busy || parsed === 0n || Boolean(error) || (!isDeposit && !isDepositor)}
         onClick={async () => {
           const ok = isDeposit ? await onDeposit(parsed) : await onWithdraw(parsed);
           if (ok) {
@@ -194,11 +156,7 @@ export function DepositWithdrawCard({
           }
         }}
       >
-        {isDeposit
-          ? depositBlocked
-            ? 'Deposits closed'
-            : 'Deposit privately'
-          : 'Withdraw principal'}
+        {isDeposit ? 'Deposit privately' : 'Withdraw principal'}
       </Button>
 
       <p className="mt-3 text-[0.76rem] leading-relaxed text-hint">
@@ -210,7 +168,6 @@ export function DepositWithdrawCard({
   );
 }
 
-/** Prints an exact 6-decimal amount for MAX, avoiding the grouped display format. */
 function exactAmount(value: bigint): string {
   const whole = value / 1_000_000n;
   const fraction = value % 1_000_000n;
@@ -237,9 +194,7 @@ function TabButton({
       onClick={onClick}
       className={cn(
         'inline-flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-2 text-[0.85rem] font-semibold transition-colors',
-        active
-          ? 'btn-ink'
-          : 'text-muted hover:text-ink',
+        active ? 'btn-ink' : 'text-muted hover:text-ink',
       )}
     >
       <HugeiconsIcon icon={icon} size={16} aria-hidden />

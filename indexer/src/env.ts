@@ -54,8 +54,8 @@ export function loadConfig(): Config {
 }
 
 /**
- * Draw keeper only needs an RPC and the vault owner key. It does not touch Supabase
- * and does not encrypt — `draw()` takes no inputs.
+ * Draw keeper only needs an RPC and the vault owner key. It does not touch Supabase.
+ * Reveal uses Node FHE publicDecrypt; openDraw / accrueMany / harvest are plain txs.
  */
 export function loadKeeperConfig(): KeeperConfig {
   const key = required('OWNER_PRIVATE_KEY');
