@@ -209,7 +209,7 @@ npm start              # indexer + keeper
 # or: npm run start:indexer   /   npm run keeper
 ```
 
-`npm start` is what you want for a demo: History stays current, and draws run every ~2 minutes.
+`npm start` is what you want for a demo: History stays current, and the keeper runs rounds about once an hour.
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 

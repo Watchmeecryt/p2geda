@@ -16,13 +16,13 @@ const STEPS = [
   },
   {
     icon: Clock01Icon,
-    title: 'Wait ~2 minutes',
-    body: 'Each draw needs at least 2 minutes of time-weighted deposits. Bigger deposits and longer stake earn more weight.',
+    title: 'Earn time-weighted odds',
+    body: 'Bigger deposits and longer stake earn more TWAB weight. On Sepolia the keeper runs a round about once an hour.',
   },
   {
     icon: DiceIcon,
-    title: 'Open → reveal → accrue',
-    body: 'Anyone can open a draw. Then someone (usually the keeper) must reveal R + total weight and accrue Apex / Pulse / Ripple. Opening alone does not pay prizes.',
+    title: 'Keeper begin → unseal → score',
+    body: 'The bot freezes the window, public-decrypts R + total weight, then scores Apex / Pulse / Ripple. Deposit and withdraw anytime without the bot.',
   },
   {
     icon: Key01Icon,

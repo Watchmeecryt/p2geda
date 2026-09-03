@@ -85,8 +85,8 @@ export function DepositWithdrawCard({
 
       {isDeposit ? (
         <p className="mt-4 rounded-2xl border border-hairline bg-surface px-3.5 py-2.5 text-[0.78rem] leading-relaxed text-muted">
-          Deposits are always open. Your time-weighted balance earns draw weight until you withdraw.
-          Draws run about every 2 minutes once someone opens them.
+          Deposits are always open. Your time-weighted balance earns round weight until you
+          withdraw. The keeper opens a round about once an hour.
         </p>
       ) : null}
 

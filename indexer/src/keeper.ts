@@ -15,10 +15,9 @@ import { getSdk, publicDecryptHandles } from './relayer.js';
  * ConfiPool V5 keeper — Node FHE + owner wallet.
  *
  * Each tick:
- *   1. harvest() — fold ConfidentialVaultSource pot into encrypted reserve (may be 0 on Sepolia).
- *   2. beginRound() when minPeriod elapsed and previous draw resolved.
- *   3. unsealRound() — publicDecrypt encR + encTotalWeight, submit cleartexts + proof.
- *   4. scoreEntrants() — batch depositors for the latest revealed draw.
+ *   1. beginRound() when minPeriod elapsed (harvests yield first, if any).
+ *   2. unsealRound() — publicDecrypt encR + encTotalWeight, submit cleartexts + proof.
+ *   3. scoreEntrants() — batch depositors for the latest revealed draw.
  *
  * Sepolia demos: admin fundReserve from the UI so prizes pay even when Morpho staging is idle.
  * Same OWNER_PRIVATE_KEY as vault.owner().
@@ -182,7 +181,7 @@ async function main() {
     `keeper ready for vault ${config.vaultAddress} as ${account.address}` +
       ` · poll every ${config.pollIntervalMs}ms`,
   );
-  log('legs each tick: harvest → beginRound → unsealRound → scoreEntrants');
+  log('legs each tick: beginRound (harvest if opening) → unsealRound → scoreEntrants');
 
   if (ONCE) {
     await tick(config, publicClient, walletClient, sdk);
@@ -205,7 +204,8 @@ async function tick(
   walletClient: Wallet,
   sdk: ZamaSDK,
 ) {
-  await maybeHarvest(config, publicClient, walletClient);
+  // Harvest only when a round is about to open — calling it every poll burns Sepolia ETH
+  // even when the ConfidentialVaultSource pot is empty.
   await maybeBeginRound(config, publicClient, walletClient);
   await maybeReveal(config, publicClient, walletClient, sdk);
   await maybeAccrue(config, publicClient, walletClient);
@@ -256,7 +256,7 @@ async function maybeBeginRound(
   walletClient: Wallet,
 ) {
   const vault = { address: config.vaultAddress, abi: VAULT_ABI } as const;
-  const [nextOpenableAt, drawCount, depositorCount, tiersConfigured] = await Promise.all([
+  const [nextRoundAt, drawCount, depositorCount, tiersConfigured] = await Promise.all([
     publicClient.readContract({ ...vault, functionName: 'nextRoundAt' }),
     publicClient.readContract({ ...vault, functionName: 'roundCount' }),
     publicClient.readContract({ ...vault, functionName: 'depositorCount' }),
@@ -286,11 +286,13 @@ async function maybeBeginRound(
   }
 
   const now = BigInt(Math.floor(Date.now() / 1000));
-  const openable = BigInt(nextOpenableAt);
+  const openable = BigInt(nextRoundAt);
   if (now < openable) {
     log(`beginRound: skip — next in ${Number(openable - now)}s`);
     return;
   }
+
+  await maybeHarvest(config, publicClient, walletClient);
 
   try {
     const hash = await walletClient.writeContract({

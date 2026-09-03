@@ -68,6 +68,6 @@ export function loadKeeperConfig(): KeeperConfig {
     rpcUrl: required('RPC_URL'),
     vaultAddress: getAddress(required('VAULT_ADDRESS')),
     ownerPrivateKey: key as `0x${string}`,
-    pollIntervalMs: numeric('KEEPER_POLL_INTERVAL_MS', 30_000),
+    pollIntervalMs: numeric('KEEPER_POLL_INTERVAL_MS', 120_000),
   };
 }
