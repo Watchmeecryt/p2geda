@@ -27,7 +27,7 @@ contract ConfidentialPrizeVault is
 {
     /// @notice Max tracked depositors (enumeration for keeper accrual batches).
     uint256 public constant MAX_DEPOSITORS = 256;
-    /// @notice Max accounts processed in one `accrueMany` call.
+    /// @notice Max accounts processed in one `scoreEntrants` call.
     uint256 public constant MAX_ACCRUE_BATCH = 16;
     /// @notice Three ConfiPool tiers: Apex (rarest), Pulse (mid), Ripple (most frequent).
     uint8 public constant TIERS = 3;
@@ -82,7 +82,7 @@ contract ConfidentialPrizeVault is
     mapping(uint32 => mapping(address => bool)) public accrued;
     mapping(uint32 => mapping(address => euint128)) private _cumAt;
 
-    uint32 public drawCount;
+    uint32 public roundCount;
     mapping(uint32 => Draw) private _draws;
 
     uint64[TIERS] public tierPrize;
@@ -120,10 +120,10 @@ contract ConfidentialPrizeVault is
     event YieldSourceSet(address indexed source);
     event Harvested(uint40 timestamp);
     event TiersConfigured(uint64[TIERS] prizes, uint128[TIERS] k);
-    event DrawOpened(uint32 indexed drawId, uint40 periodStart, uint40 snapshotAt);
-    event DrawRevealed(uint32 indexed drawId, uint64 r, uint128 totalWeight);
-    event DrawCancelled(uint32 indexed drawId, uint40 at);
-    event Accrued(address indexed account, uint32 indexed drawId);
+    event RoundBegan(uint32 indexed drawId, uint40 periodStart, uint40 snapshotAt);
+    event RoundUnsealed(uint32 indexed drawId, uint64 r, uint128 totalWeight);
+    event RoundAbandoned(uint32 indexed drawId, uint40 at);
+    event EntrantScored(address indexed account, uint32 indexed drawId);
     event PrizeClaimed(address indexed account, bytes32 indexed amountHandle);
     event TotalPrizesPaidRevealRequested(uint32 indexed drawId, bytes32 indexed totalPaidHandle);
     event MinDrawsBeforePublicRevealUpdated(uint256 value);
@@ -192,13 +192,13 @@ contract ConfidentialPrizeVault is
         return _userObs[account].length;
     }
 
-    function drawAt(uint32 drawId) external view returns (Draw memory) {
+    function roundAt(uint32 drawId) external view returns (Draw memory) {
         return _draws[drawId];
     }
 
-    function nextOpenableAt() public view returns (uint40) {
-        if (drawCount == 0) return genesis + minPeriod;
-        Draw storage last = _draws[drawCount];
+    function nextRoundAt() public view returns (uint40) {
+        if (roundCount == 0) return genesis + minPeriod;
+        Draw storage last = _draws[roundCount];
         if (last.status == DrawStatus.Cancelled) {
             return last.periodStart + minPeriod;
         }
@@ -323,14 +323,14 @@ contract ConfidentialPrizeVault is
     }
 
     function requestTotalPrizesPaidReveal() external onlyOwner returns (bytes32 handle) {
-        if (drawCount < minDrawsBeforePublicReveal) {
-            revert RevealThresholdNotMet(drawCount, minDrawsBeforePublicReveal);
+        if (roundCount < minDrawsBeforePublicReveal) {
+            revert RevealThresholdNotMet(roundCount, minDrawsBeforePublicReveal);
         }
         handle = euint64.unwrap(_totalPrizesPaid);
         if (handle == lastTotalPaidRevealHandle) revert RevealAlreadyRequested(handle);
         FHE.makePubliclyDecryptable(_totalPrizesPaid);
         lastTotalPaidRevealHandle = handle;
-        emit TotalPrizesPaidRevealRequested(drawCount, handle);
+        emit TotalPrizesPaidRevealRequested(roundCount, handle);
     }
 
     // -------------------------------------------------------------------------
@@ -338,23 +338,23 @@ contract ConfidentialPrizeVault is
     // -------------------------------------------------------------------------
 
     /// @notice Freezes the current TWAB window and draws encrypted randomness in one tx.
-    function openDraw() external returns (uint32 drawId) {
+    function beginRound() external returns (uint32 drawId) {
         if (
-            drawCount != 0 &&
-            _draws[drawCount].status != DrawStatus.Revealed &&
-            _draws[drawCount].status != DrawStatus.Cancelled
+            roundCount != 0 &&
+            _draws[roundCount].status != DrawStatus.Revealed &&
+            _draws[roundCount].status != DrawStatus.Cancelled
         ) {
             revert PreviousDrawUnresolved();
         }
         if (_totalObs.length == 0) revert NothingStaked();
 
         uint40 previous;
-        if (drawCount == 0) {
+        if (roundCount == 0) {
             previous = genesis;
-        } else if (_draws[drawCount].status == DrawStatus.Cancelled) {
-            previous = _draws[drawCount].periodStart;
+        } else if (_draws[roundCount].status == DrawStatus.Cancelled) {
+            previous = _draws[roundCount].periodStart;
         } else {
-            previous = _draws[drawCount].snapshotAt;
+            previous = _draws[roundCount].snapshotAt;
         }
         if (block.timestamp < uint256(previous) + minPeriod) {
             revert TooSoon(previous + minPeriod);
@@ -374,7 +374,7 @@ contract ConfidentialPrizeVault is
         FHE.makePubliclyDecryptable(total);
         FHE.makePubliclyDecryptable(r);
 
-        drawId = ++drawCount;
+        drawId = ++roundCount;
         _draws[drawId] = Draw({
             periodStart: periodStart,
             snapshotAt: snapshotAt,
@@ -385,11 +385,11 @@ contract ConfidentialPrizeVault is
             totalWeight: 0
         });
 
-        emit DrawOpened(drawId, periodStart, snapshotAt);
+        emit RoundBegan(drawId, periodStart, snapshotAt);
     }
 
     /// @notice Publishes R and total weight after KMS public-decrypt signatures.
-    function revealDraw(
+    function unsealRound(
         uint32 drawId,
         bytes calldata cleartexts,
         bytes calldata decryptionProof
@@ -407,13 +407,13 @@ contract ConfidentialPrizeVault is
     }
 
     /// @notice Abandons a stale open draw so the pool cannot brick.
-    function cancelDraw(uint32 drawId) external {
+    function abandonRound(uint32 drawId) external {
         Draw storage d = _draws[drawId];
         if (d.status != DrawStatus.Open) revert DrawNotOpen();
         uint40 at = d.snapshotAt + CANCEL_AFTER;
         if (block.timestamp < at) revert NotStale(at);
         d.status = DrawStatus.Cancelled;
-        emit DrawCancelled(drawId, uint40(block.timestamp));
+        emit RoundAbandoned(drawId, uint40(block.timestamp));
     }
 
     /// @notice Plaintext per-user threshold for a ConfiPool tier (Apex / Pulse / Ripple).
@@ -426,7 +426,7 @@ contract ConfidentialPrizeVault is
     }
 
     /// @notice Awards Apex / Pulse / Ripple credit for one participant. Permissionless.
-    function accrue(address user, uint32 drawId) public {
+    function scoreEntrant(address user, uint32 drawId) public {
         Draw storage d = _draws[drawId];
         if (d.status != DrawStatus.Revealed) revert DrawNotRevealed();
         if (!tiersConfigured || apexPrize == 0) revert PrizeTiersNotSet();
@@ -459,11 +459,11 @@ contract ConfidentialPrizeVault is
         FHE.allowThis(_winnings[user]);
         FHE.allow(_winnings[user], user);
 
-        emit Accrued(user, drawId);
+        emit EntrantScored(user, drawId);
     }
 
     /// @notice Batched accrual with deterministic address order (not caller-chosen).
-    function accrueMany(address[] calldata users, uint32 drawId) external {
+    function scoreEntrants(address[] calldata users, uint32 drawId) external {
         uint256 n = users.length;
         if (n == 0 || n > MAX_ACCRUE_BATCH) revert InvalidBatchSize();
 
@@ -483,7 +483,7 @@ contract ConfidentialPrizeVault is
         }
 
         for (uint256 i = 0; i < n; ++i) {
-            accrue(ordered[i], drawId);
+            scoreEntrant(ordered[i], drawId);
         }
     }
 
@@ -496,7 +496,7 @@ contract ConfidentialPrizeVault is
         d.r = r;
         d.totalWeight = total;
         d.status = DrawStatus.Revealed;
-        emit DrawRevealed(drawId, r, total);
+        emit RoundUnsealed(drawId, r, total);
     }
 
     // -------------------------------------------------------------------------

@@ -34,11 +34,11 @@ Principal is always yours.
 
 ## About
 
-ConfiPool is a PoolTogether V5–style prize pool: people deposit anytime, stay as long as they want, and the keeper runs draws on a timer. Yield (or an admin-funded reserve on Sepolia) pays **Apex / Pulse / Ripple**. Nobody else can see how much you put in, or whether you won.
+ConfiPool is a PoolTogether V5–style prize pool: people deposit anytime, stay as long as they want, and the keeper runs rounds on a timer (~hourly on Sepolia). Yield (or an admin-funded reserve on Sepolia) pays **Apex / Pulse / Ripple**. Nobody else can see how much you put in, or whether you won.
 
 **60-second loop (Sepolia demo)**
 
-Connect on Sepolia → Pool → faucet → wrap → deposit → wait ~2 minutes → keeper opens / reveals / accrues → decrypt claimable → claim or withdraw.
+Connect on Sepolia → Pool → faucet → wrap → deposit → wait for the hourly keeper round → decrypt claimable → claim or withdraw.
 
 ---
 
@@ -58,9 +58,9 @@ Connect on Sepolia → Pool → faucet → wrap → deposit → wait ~2 minutes 
 2. **Deposit** — `confidentialTransferAndCall` into `ConfidentialPrizeVault`. The vault appends a TWAB observation (encrypted balance + encrypted cumulative).
 3. **Hold** — No deposit bus. Optional `IYieldSource` parks principal; `harvest()` folds yield into the encrypted prize reserve. On Sepolia, Admin → Fund reserve seeds that pot.
 4. **Draw** — After `minPeriod` (120s on this vault):
-   - `openDraw()` freezes TWAB weight and draws encrypted `R` + encrypted total weight
-   - `revealDraw()` publishes clear `R` and `totalWeight` (KMS signatures) — not your personal weight
-   - `accrue` / `accrueMany` evaluates **Apex / Pulse / Ripple** per depositor against plaintext thresholds from `keccak256(R, drawId, user, tier)`
+   - `beginRound()` freezes TWAB weight and draws encrypted `R` + encrypted total weight
+   - `unsealRound()` publishes clear `R` and `totalWeight` (KMS signatures) — not your personal weight
+   - `scoreEntrant` / `scoreEntrants` evaluates **Apex / Pulse / Ripple** per depositor against plaintext thresholds from `keccak256(R, drawId, user, tier)`
 5. **Claim** — `claim()` confidential-transfers pending credits. Decrypt with EIP-712. Non-winners can still claim (encrypted zero), so the tx does not advertise winners.
 6. **Withdraw** — Encrypted principal out anytime. No lock, no penalty.
 
@@ -79,7 +79,7 @@ depositors ──cUSDC──► prize vault (encrypted balances + TWAB)
               ConfidentialVaultSource → Zama batchers → Morpho / Steakhouse
                          │ harvest → prize reserve
                          ▼
-         openDraw → revealDraw → accrue (Apex / Pulse / Ripple) → claim
+         beginRound → unsealRound → scoreEntrant (Apex / Pulse / Ripple) → claim
                          │
                       withdraw principal
 ```
@@ -96,7 +96,7 @@ depositors ──cUSDC──► prize vault (encrypted balances + TWAB)
 | Unclaimed winnings | Same |
 | Prize reserve | Encrypted; owner can decrypt |
 | Per-user TWAB weight | Never published |
-| Winner identity | Not emitted — accrue runs for every depositor |
+| Winner identity | Not emitted — scoreEntrant runs for every depositor |
 
 | Public on purpose | Why |
 |-------------------|-----|
@@ -106,7 +106,7 @@ depositors ──cUSDC──► prize vault (encrypted balances + TWAB)
 | Tier sizes and `k` | Odds schedule is public |
 | Aggregate prizes paid | Optional, after admin reveal (≥ 5 draws by default) |
 
-Winner selection: `openDraw` uses onchain `FHE.randEuint64()`. After reveal, each account is checked independently. Best tier wins (Apex > Pulse > Ripple). If the reserve cannot cover it, the credit is encrypted zero.
+Winner selection: `beginRound` uses onchain `FHE.randEuint64()`. After reveal, each account is checked independently. Best tier wins (Apex > Pulse > Ripple). If the reserve cannot cover it, the credit is encrypted zero.
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -160,7 +160,7 @@ Official Zama addresses: [`sepolia-confidential-vault.json`](./contracts/deploym
 
 - **minPeriod:** 120s · **tiers:** Apex 100 / Pulse 25 / Ripple 5 · deploy block `11621678`
 - Deployment JSON: [`contracts/deployments/sepolia.json`](./contracts/deployments/sepolia.json)
-- `openDraw` is permissionless after `minPeriod`. In-app faucet: Pool → Use faucet.
+- `beginRound` is permissionless after `minPeriod`. In-app faucet: Pool → Use faucet.
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -232,7 +232,7 @@ npm start              # indexer + keeper
 1. Underlying → Circle USDC; confidential → mainnet `cUSDC`.
 2. Deploy the vault with a longer `minPeriod` (day / week).
 3. Point `ConfidentialVaultSource` at live Steakhouse / Morpho addresses.
-4. In `indexer/src/relayer.ts`: `sepolia` → `mainnet` + API key auth. Keeper still runs `joinVault` / `harvest` / `openDraw` / `revealDraw` / `accrueMany`.
+4. In `indexer/src/relayer.ts`: `sepolia` → `mainnet` + API key auth. Keeper still runs `joinVault` / `harvest` / `beginRound` / `unsealRound` / `scoreEntrants`.
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 

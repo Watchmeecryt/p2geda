@@ -12,12 +12,12 @@ export const VAULT_EVENTS = {
   ),
   reserve: parseAbiItem('event PrizeReserveFunded(bytes32 indexed newReserveHandle)'),
   draw: parseAbiItem(
-    'event DrawOpened(uint32 indexed drawId, uint40 periodStart, uint40 snapshotAt)',
+    'event RoundBegan(uint32 indexed drawId, uint40 periodStart, uint40 snapshotAt)',
   ),
   reveal_draw: parseAbiItem(
-    'event DrawRevealed(uint32 indexed drawId, uint64 r, uint128 totalWeight)',
+    'event RoundUnsealed(uint32 indexed drawId, uint64 r, uint128 totalWeight)',
   ),
-  accrue: parseAbiItem('event Accrued(address indexed account, uint32 indexed drawId)'),
+  accrue: parseAbiItem('event EntrantScored(address indexed account, uint32 indexed drawId)'),
   claim: parseAbiItem('event PrizeClaimed(address indexed account, bytes32 indexed amountHandle)'),
   reveal: parseAbiItem(
     'event TotalPrizesPaidRevealRequested(uint32 indexed drawId, bytes32 indexed totalPaidHandle)',

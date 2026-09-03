@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {ConfidentialPrizeVault} from "../ConfidentialPrizeVault.sol";
 
 /// @notice Local Hardhat harness: applies a revealed draw without KMS signatures.
-/// @dev Production deployments use `ConfidentialPrizeVault` + `revealDraw` with real proofs.
+/// @dev Production deployments use `ConfidentialPrizeVault` + `unsealRound` with real proofs.
 contract ConfidentialPrizeVaultHarness is ConfidentialPrizeVault {
     constructor(
         address confidentialToken_,

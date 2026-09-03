@@ -9,13 +9,13 @@ interface IConfidentialPrizeVault {
     function underlyingToken() external view returns (address);
     function minPeriod() external view returns (uint40);
     function genesis() external view returns (uint40);
-    function drawCount() external view returns (uint32);
+    function roundCount() external view returns (uint32);
     function depositorCount() external view returns (uint256);
     function depositorAt(uint256 index) external view returns (address);
     function yieldSource() external view returns (IYieldSource);
     function tiersConfigured() external view returns (bool);
     function apexPrize() external view returns (uint64);
-    function nextOpenableAt() external view returns (uint40);
+    function nextRoundAt() external view returns (uint40);
 
     function confidentialBalanceOf(address account) external view returns (euint64);
     function confidentialClaimableOf(address account) external view returns (euint64);
@@ -31,11 +31,11 @@ interface IConfidentialPrizeVault {
     function withdraw(externalEuint64 encryptedAmount, bytes calldata inputProof) external returns (euint64);
     function claim() external returns (euint64);
 
-    function openDraw() external returns (uint32 drawId);
-    function revealDraw(uint32 drawId, bytes calldata cleartexts, bytes calldata decryptionProof) external;
-    function cancelDraw(uint32 drawId) external;
+    function beginRound() external returns (uint32 drawId);
+    function unsealRound(uint32 drawId, bytes calldata cleartexts, bytes calldata decryptionProof) external;
+    function abandonRound(uint32 drawId) external;
     function thresholdFor(uint32 drawId, address user, uint8 tier) external view returns (uint128);
-    function accrue(address user, uint32 drawId) external;
-    function accrueMany(address[] calldata users, uint32 drawId) external;
+    function scoreEntrant(address user, uint32 drawId) external;
+    function scoreEntrants(address[] calldata users, uint32 drawId) external;
     function requestTotalPrizesPaidReveal() external returns (bytes32);
 }

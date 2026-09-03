@@ -1,7 +1,7 @@
 {
   "network": "sepolia",
-  "confidentialVaultSource": "0xf0150cC2297065f28f41D9cf481F3aE9D6028923",
-  "controller": "0x335339161E31fD94fF5A5d0595eC7526AFe9373F",
+  "confidentialVaultSource": "0x89A3F09Cc68d89b6825C74392B7563318CcF22D3",
+  "controller": "0x06742409F042B3c5932c6C154B9CE67929076eD0",
   "rateBps": "500",
   "source": "https://docs.zama.org/protocol/confidential-vault/reference/addresses",
   "chainId": 11155111,
@@ -14,5 +14,5 @@
   "cShare": "0x7E93d5c150A2178B1fCde0278582Acf59478eA5f",
   "erc4626UnderlyingVault": "0x6AB54988261AEC573a2CA13cF802d3B1114f864C",
   "whitelistGate": "0x0C7c3830B16B65FF90f96F88a9ad2dCaB9434e74",
-  "deployedAt": "2026-09-02T19:41:36.781Z"
+  "deployedAt": "2026-09-03T08:29:45.534Z"
 }

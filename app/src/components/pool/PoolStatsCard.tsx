@@ -2,42 +2,31 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { Clock01Icon, DiceIcon, UserGroupIcon } from '@hugeicons/core-free-icons';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useNextOpenRemaining } from '@/hooks/useCountdown';
 import { formatCountdown, formatConfidential } from '@/lib/format';
 import { DRAW_STATUS } from '@/lib/contracts';
 import type { PoolStats } from '@/hooks/usePoolData';
 
-export function PoolStatsCard({
-  stats,
-  canOpen = false,
-  opening = false,
-  onOpenDraw,
-}: {
-  stats: PoolStats;
-  canOpen?: boolean;
-  opening?: boolean;
-  onOpenDraw?: () => void;
-}) {
+/**
+ * Public pool facts only. Round begin / unseal / score is keeper-driven
+ * (hourly on Sepolia) — reviewers deposit, wait, then decrypt & claim.
+ */
+export function PoolStatsCard({ stats }: { stats: PoolStats }) {
   const { remaining, awaitingReveal } = useNextOpenRemaining(stats);
   const live = stats.tiersConfigured;
-  const openReady =
-    stats.depositorCount > 0n &&
-    remaining === 0 &&
-    live &&
-    stats.currentDrawStatus !== DRAW_STATUS.Open;
+  const period = Number(stats.minPeriod || 3600n);
 
   const statusLabel =
-    awaitingReveal
-      ? 'Awaiting reveal'
+    awaitingReveal || stats.currentDrawStatus === DRAW_STATUS.Open
+      ? 'Keeper unsealing…'
       : stats.currentDrawStatus === DRAW_STATUS.Revealed
-        ? 'Revealed — accrue'
-        : openReady
-          ? 'Ready to open'
-          : remaining > 0
-            ? `Opens in ${formatCountdown(remaining)}`
-            : 'Waiting for depositors';
+        ? 'Keeper scoring…'
+        : remaining > 0
+          ? `Next round in ${formatCountdown(remaining)}`
+          : stats.depositorCount === 0n
+            ? 'Waiting for depositors'
+            : 'Keeper will begin soon';
 
   return (
     <Card>
@@ -56,14 +45,12 @@ export function PoolStatsCard({
       <dl className="mt-5 space-y-4">
         <Row
           icon={<HugeiconsIcon icon={Clock01Icon} size={15} aria-hidden />}
-          label="Next openDraw"
+          label="Next round"
           value={
             stats.isLoading ? (
               <Skeleton className="h-5 w-16" />
-            ) : openReady ? (
-              'Ready now'
-            ) : awaitingReveal ? (
-              'Awaiting reveal'
+            ) : awaitingReveal || stats.currentDrawStatus === DRAW_STATUS.Open ? (
+              'Unsealing'
             ) : remaining > 0 ? (
               formatCountdown(remaining)
             ) : (
@@ -73,7 +60,7 @@ export function PoolStatsCard({
         />
         <Row
           icon={<HugeiconsIcon icon={DiceIcon} size={15} aria-hidden />}
-          label="Draws opened"
+          label="Rounds opened"
           value={stats.isLoading ? <Skeleton className="h-5 w-8" /> : stats.drawCount.toString()}
         />
         <Row
@@ -96,30 +83,10 @@ export function PoolStatsCard({
         />
       </dl>
 
-      {onOpenDraw ? (
-        <div className="mt-5 border-t border-hairline pt-4">
-          <Button
-            variant="accent"
-            fullWidth
-            size="lg"
-            className="h-[3.75rem] text-[1.05rem] font-bold shadow-cta-soft sm:h-16 sm:text-[1.15rem]"
-            disabled={!canOpen || !openReady}
-            loading={opening}
-            onClick={onOpenDraw}
-          >
-            <HugeiconsIcon icon={DiceIcon} size={22} aria-hidden />
-            {openReady ? 'Open draw' : statusLabel}
-          </Button>
-          <p className="mt-3 text-center text-[0.76rem] leading-relaxed text-hint">
-            Opening freezes TWAB weight and draws encrypted randomness. The keeper reveals and
-            accrues Apex / Pulse / Ripple in the background.
-          </p>
-        </div>
-      ) : (
-        <p className="mt-5 border-t border-hairline pt-4 text-[0.76rem] leading-relaxed text-hint">
-          Demo cadence: {Number(stats.minPeriod)}s between draws. Deposits stay open — no timed bus.
-        </p>
-      )}
+      <p className="mt-5 border-t border-hairline pt-4 text-[0.76rem] leading-relaxed text-hint">
+        {statusLabel}. Keeper cadence ~{formatCountdown(period)} (minPeriod). Deposit and withdraw
+        anytime — no bot needed for those.
+      </p>
     </Card>
   );
 }

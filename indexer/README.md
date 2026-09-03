@@ -21,6 +21,6 @@ npm run keeper          # loop
 npm run keeper:once     # single tick
 ```
 
-Each tick: `harvest` → `openDraw` → `revealDraw` (FHE publicDecrypt of R + totalWeight) → `accrueMany`.
+Each tick: `harvest` → `beginRound` → `unsealRound` (FHE publicDecrypt of R + totalWeight) → `scoreEntrants`.
 
 For Sepolia demos, fund the prize reserve from the Admin UI first so accrue can pay.

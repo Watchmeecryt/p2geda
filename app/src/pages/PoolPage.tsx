@@ -27,18 +27,12 @@ export function PoolPage() {
     stats.refetch();
   }, [position, stats]);
 
-  const runOpenDraw = useCallback(async () => {
-    if (await actions.openDraw()) {
-      refresh();
-    }
-  }, [actions, refresh]);
-
   return (
     <div>
       <PageHeader
         kicker="Pool"
         title="Save privately, win together"
-        description="Deposit confidential cUSDC anytime. Time-weighted balance earns Apex / Pulse / Ripple odds. Principal stays yours."
+        description="Deposit confidential cUSDC anytime. The keeper runs rounds about once an hour. Principal stays yours — withdraw whenever you want."
       />
 
       {!isConnected ? (
@@ -83,12 +77,7 @@ export function PoolPage() {
               walletBalance={view.tokenValue(position.walletHandle)}
               isDepositor={position.isDepositor}
             />
-            <PoolStatsCard
-              stats={stats}
-              canOpen
-              opening={actions.activeAction === 'openDraw'}
-              onOpenDraw={runOpenDraw}
-            />
+            <PoolStatsCard stats={stats} />
           </div>
         </div>
       )}

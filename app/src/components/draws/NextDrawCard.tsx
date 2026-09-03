@@ -3,28 +3,41 @@ import { DiceIcon, SparklesIcon } from '@hugeicons/core-free-icons';
 import { useNextOpenRemaining } from '@/hooks/useCountdown';
 import { formatCountdown } from '@/lib/format';
 import type { PoolStats } from '@/hooks/usePoolData';
-import { Button } from '@/components/ui/Button';
+import { DRAW_STATUS } from '@/lib/contracts';
 import { cn } from '@/lib/utils';
 
-export function NextDrawCard({
-  stats,
-  canOpen = false,
-  opening = false,
-  onOpenDraw,
-}: {
-  stats: PoolStats;
-  canOpen?: boolean;
-  opening?: boolean;
-  onOpenDraw?: () => void;
-}) {
+/**
+ * Countdown + status for the keeper-driven round. Reviewers do not begin / unseal /
+ * score from the UI — the bot runs those on minPeriod (hourly on Sepolia).
+ */
+export function NextDrawCard({ stats }: { stats: PoolStats }) {
   const { remaining, awaitingReveal } = useNextOpenRemaining(stats);
-  const period = Number(stats.minPeriod || 120n);
+  const period = Number(stats.minPeriod || 3600n);
   const live = stats.tiersConfigured;
-  const unresolvedOpen = awaitingReveal;
-  const openReady =
-    stats.depositorCount > 0n && remaining === 0 && live && !unresolvedOpen;
+  const status = stats.currentDrawStatus;
+  const drawId = stats.currentDrawId;
+  const isOpen = status === DRAW_STATUS.Open || awaitingReveal;
+  const isRevealed = status === DRAW_STATUS.Revealed;
   const elapsed =
     remaining <= 0 || period <= 0 ? 1 : Math.min(1, Math.max(0, 1 - remaining / period));
+
+  const headline = isOpen
+    ? 'Unsealing'
+    : isRevealed
+      ? 'Scoring'
+      : stats.depositorCount === 0n
+        ? 'Deposit'
+        : remaining > 0
+          ? formatCountdown(remaining)
+          : 'Soon';
+
+  const blurb = isOpen
+    ? `Round #${drawId} is open. The keeper public-decrypts R + total weight, then scores depositors.`
+    : isRevealed
+      ? `Round #${drawId} is unsealed. The keeper is scoring Apex / Pulse / Ripple for depositors.`
+      : stats.depositorCount === 0n
+        ? 'Deposit cUSDC so the pool has TWAB weight. The keeper opens a round about once an hour.'
+        : `Continuous deposits. Next keeper beginRound in ${formatCountdown(remaining)} (minPeriod ${formatCountdown(period)}).`;
 
   return (
     <div className="relative overflow-hidden rounded-xl border border-white/10 bg-ink p-6 shadow-[0_24px_60px_rgba(0,0,0,0.28)] sm:p-8">
@@ -35,25 +48,11 @@ export function NextDrawCard({
 
       <div className="relative flex flex-wrap items-start justify-between gap-5">
         <div>
-          <p className="label-pill text-white/50">Next draw window</p>
+          <p className="label-pill text-white/50">Next round window</p>
           <p className="numeral mt-2.5 text-[clamp(2.25rem,6vw,3.25rem)] leading-none font-medium text-white">
-            {unresolvedOpen
-              ? 'Open'
-              : openReady
-                ? 'Ready'
-                : stats.depositorCount === 0n
-                  ? 'Deposit'
-                  : formatCountdown(remaining)}
+            {headline}
           </p>
-          <p className="mt-3 text-[13.5px] text-white/55">
-            {unresolvedOpen
-              ? 'Draw is open — waiting for KMS reveal + accrue (keeper).'
-              : openReady
-                ? 'minPeriod elapsed. Anyone can open the next encrypted draw.'
-                : stats.depositorCount === 0n
-                  ? 'Deposit cUSDC so the pool has TWAB weight to draw over.'
-                  : `Continuous deposits. Next openDraw in ${formatCountdown(remaining)} (minPeriod ${formatCountdown(period)}).`}
-          </p>
+          <p className="mt-3 max-w-xl text-[13.5px] text-white/55">{blurb}</p>
         </div>
 
         <div className="flex flex-col items-end gap-2.5">
@@ -79,7 +78,7 @@ export function NextDrawCard({
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={Math.round(elapsed * 100)}
-          aria-label="Progress toward next openDraw"
+          aria-label="Progress toward next keeper beginRound"
         >
           <div
             className="h-full rounded-full bg-accent-bright transition-[width] duration-1000 ease-linear"
@@ -87,27 +86,10 @@ export function NextDrawCard({
           />
         </div>
         <p className="mt-3 text-[12.5px] text-white/45">
-          Admin funds the prize reserve for Sepolia demos. On mainnet, Morpho yield via the
-          confidential vault source fills the same reserve.
+          Deposit and withdraw anytime. The keeper runs beginRound → unsealRound → scoreEntrants
+          about every {formatCountdown(period)}. Admin funds the prize reserve for Sepolia demos.
         </p>
       </div>
-
-      {onOpenDraw ? (
-        <div className="relative mt-7">
-          <Button
-            variant="accent"
-            fullWidth
-            size="lg"
-            className="h-[4.25rem] text-[1.2rem] font-bold tracking-[-0.01em] shadow-cta-soft sm:h-[4.75rem] sm:text-[1.35rem]"
-            disabled={!canOpen || !openReady}
-            loading={opening}
-            onClick={onOpenDraw}
-          >
-            <HugeiconsIcon icon={DiceIcon} size={26} aria-hidden />
-            {openReady ? 'Open draw' : unresolvedOpen ? 'Awaiting reveal' : `Opens in ${formatCountdown(remaining)}`}
-          </Button>
-        </div>
-      ) : null}
     </div>
   );
 }

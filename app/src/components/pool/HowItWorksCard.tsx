@@ -65,17 +65,17 @@ export function FheDrawExplainer() {
         <Point
           icon={DiceIcon}
           title="Encrypted randomness"
-          body="openDraw freezes a TWAB window and draws an encrypted ticket R with FHE.randEuint64(). Nobody sees R yet."
+          body="beginRound freezes a TWAB window and draws an encrypted ticket R with FHE.randEuint64(). Nobody sees R yet."
         />
         <Point
           icon={SquareLock02Icon}
           title="Public decrypt of aggregates"
-          body="Only R and totalWeight are made publicly decryptable. The keeper posts KMS signatures via revealDraw. Individual balances stay private."
+          body="Only R and totalWeight are made publicly decryptable. The keeper posts KMS signatures via unsealRound. Individual balances stay private."
         />
         <Point
           icon={UserGroupIcon}
           title="Apex / Pulse / Ripple"
-          body="After reveal, accrue compares each depositor’s encrypted weight to plaintext thresholds. Rare Apex, mid Pulse, frequent Ripple — paid from the encrypted reserve if funded."
+          body="After unseal, the keeper runs scoreEntrants for depositors. Rare Apex, mid Pulse, frequent Ripple — paid from the encrypted reserve if funded."
         />
       </div>
     </Card>

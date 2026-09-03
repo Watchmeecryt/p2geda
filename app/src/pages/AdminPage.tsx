@@ -5,7 +5,6 @@ import type { Hex } from 'viem';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   Analytics01Icon,
-  DiceIcon,
   MoneyBag02Icon,
   Settings02Icon,
 } from '@hugeicons/core-free-icons';
@@ -15,7 +14,6 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Modal } from '@/components/ui/Modal';
 import { ConfidentialAmount } from '@/components/ConfidentialAmount';
 import { PrivateViewToggle } from '@/components/PrivateViewToggle';
 import { AmountModal } from '@/components/admin/AmountModal';
@@ -28,7 +26,7 @@ import { UNINITIALIZED_HANDLE, VAULT_ABI, VAULT_ADDRESS } from '@/lib/contracts'
 import { explorerAddressUrl } from '@/lib/chains';
 import { formatConfidential, formatCountdown, shortenAddress } from '@/lib/format';
 
-type Dialog = 'reserve' | 'openDraw' | 'reveal' | null;
+type Dialog = 'reserve' | 'reveal' | null;
 
 export function AdminPage() {
   const { isConnected } = useAccount();
@@ -64,11 +62,6 @@ export function AdminPage() {
   });
 
   const { remaining, awaitingReveal } = useNextOpenRemaining(stats);
-  const openReady =
-    stats.depositorCount > 0n &&
-    remaining === 0 &&
-    stats.tiersConfigured &&
-    !awaitingReveal;
 
   const refresh = useCallback(() => {
     stats.refetch();
@@ -117,7 +110,7 @@ export function AdminPage() {
       <PageHeader
         kicker="Admin"
         title="Pool operations"
-        description="For Sepolia demos, fund the encrypted prize reserve yourself (bounty allows an admin-funded yield source). The keeper opens/reveals/accrues in the background."
+        description="For Sepolia demos, fund the encrypted prize reserve yourself (bounty allows an admin-funded yield source). The keeper runs beginRound → unsealRound → scoreEntrants about once an hour."
         action={<PrivateViewToggle view={view} size="md" />}
       />
 
@@ -144,9 +137,9 @@ export function AdminPage() {
               <p className="mt-1 text-[0.78rem] text-hint">Apex / Pulse / Ripple (set at deploy)</p>
             </div>
             <div>
-              <p className="label-pill">Next openDraw</p>
+              <p className="label-pill">Next beginRound</p>
               <p className="numeral mt-2 text-[1.5rem] leading-tight font-bold">
-                {awaitingReveal ? 'Awaiting reveal' : formatCountdown(remaining)}
+                {awaitingReveal ? 'Keeper unsealing…' : formatCountdown(remaining)}
               </p>
               <p className="mt-1 text-[0.78rem] text-hint">
                 {stats.drawCount.toString()} opened · {stats.depositorCount.toString()} depositors
@@ -164,16 +157,6 @@ export function AdminPage() {
             status="Admin only"
             tone="warning"
             onClick={() => setDialog('reserve')}
-            disabled={actions.isRunning}
-          />
-          <ActionCard
-            icon={DiceIcon}
-            title="Open a draw"
-            body="Permissionless once minPeriod elapses. Prefer the keeper; use this for a live demo click."
-            cta="Open draw"
-            status={openReady ? 'Ready' : 'Not ready'}
-            tone={openReady ? 'success' : 'neutral'}
-            onClick={() => setDialog('openDraw')}
             disabled={actions.isRunning}
           />
           <ActionCard
@@ -234,53 +217,6 @@ export function AdminPage() {
         />
       ) : null}
 
-      <Modal
-        open={dialog === 'openDraw'}
-        onClose={() => setDialog(null)}
-        dismissible={actions.activeAction !== 'openDraw'}
-        icon={<HugeiconsIcon icon={DiceIcon} size={20} aria-hidden />}
-        title="Open the next draw"
-        description="Freezes TWAB weight and draws encrypted R. Keeper reveals + accrues next."
-        footer={
-          <>
-            <Button
-              fullWidth
-              loading={actions.activeAction === 'openDraw'}
-              disabled={actions.isRunning || !openReady}
-              onClick={async () => {
-                if (await actions.openDraw()) {
-                  refresh();
-                  setDialog(null);
-                }
-              }}
-            >
-              Open draw
-            </Button>
-            <Button
-              variant="secondary"
-              fullWidth
-              disabled={actions.isRunning}
-              onClick={() => setDialog(null)}
-            >
-              Cancel
-            </Button>
-          </>
-        }
-      >
-        <ul className="space-y-2">
-          <Requirement met={stats.tiersConfigured} label="Apex / Pulse / Ripple configured" />
-          <Requirement met={stats.depositorCount > 0n} label="At least one depositor" />
-          <Requirement
-            met={remaining === 0}
-            label={
-              remaining === 0
-                ? 'minPeriod has elapsed'
-                : `minPeriod elapses in ${formatCountdown(remaining)}`
-            }
-          />
-        </ul>
-      </Modal>
-
       {dialog === 'reveal' ? (
         <RevealModal
           onClose={() => setDialog(null)}
@@ -297,24 +233,6 @@ export function AdminPage() {
         />
       ) : null}
     </div>
-  );
-}
-
-function Requirement({ met, label }: { met: boolean; label: string }) {
-  return (
-    <li className="flex items-center gap-2.5 text-[0.86rem]">
-      <span
-        aria-hidden
-        className={
-          met
-            ? 'grid size-5 place-items-center rounded-full bg-ink text-[0.7rem] text-white'
-            : 'grid size-5 place-items-center rounded-full border border-strong text-[0.7rem] text-hint'
-        }
-      >
-        {met ? '✓' : '•'}
-      </span>
-      <span className={met ? 'text-ink' : 'text-muted'}>{label}</span>
-    </li>
   );
 }
 

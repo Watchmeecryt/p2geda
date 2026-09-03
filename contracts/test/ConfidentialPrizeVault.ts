@@ -125,12 +125,12 @@ async function deployFixture() {
   }
 
   async function waitUntilOpenable() {
-    const openableAt = await vault.nextOpenableAt();
+    const openableAt = await vault.nextRoundAt();
     const now = BigInt(await time.latest());
     if (openableAt > now && openableAt < BigInt(2) ** BigInt(40) - 1n) {
       await time.increaseTo(openableAt + 1n);
     } else if (openableAt >= BigInt(2) ** BigInt(40) - 1n) {
-      throw new Error("draw still open; reveal or cancel first");
+      throw new Error("round still open; reveal or cancel first");
     } else {
       await time.increase(1);
     }
@@ -138,9 +138,9 @@ async function deployFixture() {
 
   async function openAndReveal() {
     await waitUntilOpenable();
-    await (await vault.connect(owner).openDraw()).wait();
-    const drawId = await vault.drawCount();
-    const d = await vault.drawAt(drawId);
+    await (await vault.connect(owner).beginRound()).wait();
+    const drawId = await vault.roundCount();
+    const d = await vault.roundAt(drawId);
 
     const r = await fhevm.publicDecryptEuint(FhevmType.euint64, d.encR);
     const totalWeight = await fhevm.publicDecryptEuint(FhevmType.euint128, d.encTotalWeight);
@@ -250,8 +250,8 @@ describe("ConfidentialPrizeVault (V5-style TWAB + Apex/Pulse/Ripple)", function 
     expect(drawId).to.equal(1n);
     expect(totalWeight).to.be.gt(0n);
 
-    await (await vault.connect(owner).accrue(alice.address, drawId)).wait();
-    await (await vault.connect(owner).accrue(bob.address, drawId)).wait();
+    await (await vault.connect(owner).scoreEntrant(alice.address, drawId)).wait();
+    await (await vault.connect(owner).scoreEntrant(bob.address, drawId)).wait();
 
     const alicePrize = await claimable(alice);
     const bobPrize = await claimable(bob);
@@ -295,7 +295,7 @@ describe("ConfidentialPrizeVault (V5-style TWAB + Apex/Pulse/Ripple)", function 
     for (let i = 0; i < 6 && !sawWin; i += 1) {
       await time.increase(20);
       const { drawId } = await openAndReveal();
-      await (await vault.accrueMany([alice.address, bob.address], drawId)).wait();
+      await (await vault.scoreEntrants([alice.address, bob.address], drawId)).wait();
 
       const a = await claimable(alice);
       const b = await claimable(bob);

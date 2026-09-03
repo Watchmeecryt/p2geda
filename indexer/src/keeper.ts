@@ -16,9 +16,9 @@ import { getSdk, publicDecryptHandles } from './relayer.js';
  *
  * Each tick:
  *   1. harvest() — fold ConfidentialVaultSource pot into encrypted reserve (may be 0 on Sepolia).
- *   2. openDraw() when minPeriod elapsed and previous draw resolved.
- *   3. revealDraw() — publicDecrypt encR + encTotalWeight, submit cleartexts + proof.
- *   4. accrueMany() — batch depositors for the latest revealed draw.
+ *   2. beginRound() when minPeriod elapsed and previous draw resolved.
+ *   3. unsealRound() — publicDecrypt encR + encTotalWeight, submit cleartexts + proof.
+ *   4. scoreEntrants() — batch depositors for the latest revealed draw.
  *
  * Sepolia demos: admin fundReserve from the UI so prizes pay even when Morpho staging is idle.
  * Same OWNER_PRIVATE_KEY as vault.owner().
@@ -34,14 +34,14 @@ const VAULT_ABI = [
   },
   {
     type: 'function',
-    name: 'nextOpenableAt',
+    name: 'nextRoundAt',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'uint40' }],
   },
   {
     type: 'function',
-    name: 'drawCount',
+    name: 'roundCount',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'uint32' }],
@@ -83,7 +83,7 @@ const VAULT_ABI = [
   },
   {
     type: 'function',
-    name: 'drawAt',
+    name: 'roundAt',
     stateMutability: 'view',
     inputs: [{ name: 'drawId', type: 'uint32' }],
     outputs: [
@@ -108,14 +108,14 @@ const VAULT_ABI = [
   },
   {
     type: 'function',
-    name: 'openDraw',
+    name: 'beginRound',
     stateMutability: 'nonpayable',
     inputs: [],
     outputs: [{ type: 'uint32' }],
   },
   {
     type: 'function',
-    name: 'revealDraw',
+    name: 'unsealRound',
     stateMutability: 'nonpayable',
     inputs: [
       { name: 'drawId', type: 'uint32' },
@@ -126,7 +126,7 @@ const VAULT_ABI = [
   },
   {
     type: 'function',
-    name: 'accrueMany',
+    name: 'scoreEntrants',
     stateMutability: 'nonpayable',
     inputs: [
       { name: 'users', type: 'address[]' },
@@ -182,7 +182,7 @@ async function main() {
     `keeper ready for vault ${config.vaultAddress} as ${account.address}` +
       ` · poll every ${config.pollIntervalMs}ms`,
   );
-  log('legs each tick: harvest → openDraw → revealDraw → accrueMany');
+  log('legs each tick: harvest → beginRound → unsealRound → scoreEntrants');
 
   if (ONCE) {
     await tick(config, publicClient, walletClient, sdk);
@@ -206,7 +206,7 @@ async function tick(
   sdk: ZamaSDK,
 ) {
   await maybeHarvest(config, publicClient, walletClient);
-  await maybeOpenDraw(config, publicClient, walletClient);
+  await maybeBeginRound(config, publicClient, walletClient);
   await maybeReveal(config, publicClient, walletClient, sdk);
   await maybeAccrue(config, publicClient, walletClient);
 }
@@ -250,25 +250,25 @@ async function maybeHarvest(
   log(`harvest: submitted ${hash}`);
 }
 
-async function maybeOpenDraw(
+async function maybeBeginRound(
   config: KeeperConfig,
   publicClient: PublicClient,
   walletClient: Wallet,
 ) {
   const vault = { address: config.vaultAddress, abi: VAULT_ABI } as const;
   const [nextOpenableAt, drawCount, depositorCount, tiersConfigured] = await Promise.all([
-    publicClient.readContract({ ...vault, functionName: 'nextOpenableAt' }),
-    publicClient.readContract({ ...vault, functionName: 'drawCount' }),
+    publicClient.readContract({ ...vault, functionName: 'nextRoundAt' }),
+    publicClient.readContract({ ...vault, functionName: 'roundCount' }),
     publicClient.readContract({ ...vault, functionName: 'depositorCount' }),
     publicClient.readContract({ ...vault, functionName: 'tiersConfigured' }),
   ]);
 
   if (!tiersConfigured) {
-    log('openDraw: skip — tiers not configured');
+    log('beginRound: skip — tiers not configured');
     return;
   }
   if (depositorCount === 0n) {
-    log('openDraw: skip — no depositors');
+    log('beginRound: skip — no depositors');
     return;
   }
 
@@ -276,11 +276,11 @@ async function maybeOpenDraw(
   if (count > 0) {
     const draw = (await publicClient.readContract({
       ...vault,
-      functionName: 'drawAt',
+      functionName: 'roundAt',
       args: [count],
     })) as unknown as readonly [number, number, number, Hex, Hex, bigint, bigint];
     if (Number(draw[2]) === DRAW_OPEN) {
-      log(`openDraw: skip — draw #${count} still open (awaiting reveal)`);
+      log(`beginRound: skip — draw #${count} still open (awaiting reveal)`);
       return;
     }
   }
@@ -288,23 +288,23 @@ async function maybeOpenDraw(
   const now = BigInt(Math.floor(Date.now() / 1000));
   const openable = BigInt(nextOpenableAt);
   if (now < openable) {
-    log(`openDraw: skip — next in ${Number(openable - now)}s`);
+    log(`beginRound: skip — next in ${Number(openable - now)}s`);
     return;
   }
 
   try {
     const hash = await walletClient.writeContract({
       ...vault,
-      functionName: 'openDraw',
+      functionName: 'beginRound',
       account: walletClient.account!,
       chain: sepolia,
     });
     await publicClient.waitForTransactionReceipt({ hash });
-    const newCount = await publicClient.readContract({ ...vault, functionName: 'drawCount' });
-    log(`openDraw: #${newCount} confirmed (${hash})`);
+    const newCount = await publicClient.readContract({ ...vault, functionName: 'roundCount' });
+    log(`beginRound: #${newCount} confirmed (${hash})`);
   } catch (error) {
     if (isSoftSkip(error)) {
-      log(`openDraw: soft skip — ${describe(error)}`);
+      log(`beginRound: soft skip — ${describe(error)}`);
       return;
     }
     throw error;
@@ -319,7 +319,7 @@ async function maybeReveal(
 ) {
   const vault = { address: config.vaultAddress, abi: VAULT_ABI } as const;
   const drawCount = Number(
-    await publicClient.readContract({ ...vault, functionName: 'drawCount' }),
+    await publicClient.readContract({ ...vault, functionName: 'roundCount' }),
   );
   if (drawCount === 0) {
     log('reveal: skip — no draws');
@@ -328,7 +328,7 @@ async function maybeReveal(
 
   const draw = (await publicClient.readContract({
     ...vault,
-    functionName: 'drawAt',
+    functionName: 'roundAt',
     args: [drawCount],
   })) as unknown as readonly [number, number, number, Hex, Hex, bigint, bigint];
 
@@ -352,7 +352,7 @@ async function maybeReveal(
 
   const hash = await walletClient.writeContract({
     ...vault,
-    functionName: 'revealDraw',
+    functionName: 'unsealRound',
     args: [drawCount, decrypted.cleartexts, decrypted.decryptionProof],
     account: walletClient.account!,
     chain: sepolia,
@@ -368,7 +368,7 @@ async function maybeAccrue(
 ) {
   const vault = { address: config.vaultAddress, abi: VAULT_ABI } as const;
   const drawCount = Number(
-    await publicClient.readContract({ ...vault, functionName: 'drawCount' }),
+    await publicClient.readContract({ ...vault, functionName: 'roundCount' }),
   );
   if (drawCount === 0) {
     log('accrue: skip — no draws');
@@ -377,7 +377,7 @@ async function maybeAccrue(
 
   const draw = (await publicClient.readContract({
     ...vault,
-    functionName: 'drawAt',
+    functionName: 'roundAt',
     args: [drawCount],
   })) as unknown as readonly [number, number, number, Hex, Hex, bigint, bigint];
 
@@ -417,7 +417,7 @@ async function maybeAccrue(
   log(`accrue: batch ${pending.length} of draw #${drawCount}…`);
   const hash = await walletClient.writeContract({
     ...vault,
-    functionName: 'accrueMany',
+    functionName: 'scoreEntrants',
     args: [pending, drawCount],
     account: walletClient.account!,
     chain: sepolia,

@@ -10,16 +10,31 @@ function envAddress(raw: string | undefined, fallback: Address): Address {
   }
 }
 
-/** Live V5 TWAB vault (Sepolia 2026-09-02). */
+/** Live V5 TWAB vault (Sepolia — beginRound/unsealRound/scoreEntrant, minPeriod 1h). */
 export const VAULT_ADDRESS = envAddress(
   import.meta.env.VITE_CONFIPOOL_VAULT_ADDRESS,
-  '0x335339161E31fD94fF5A5d0595eC7526AFe9373F',
+  '0x06742409F042B3c5932c6C154B9CE67929076eD0',
 );
+
+/**
+ * Prior Sepolia demo vault(s). History / Metrics still load their indexed rows so a
+ * redeploy does not blank the Global feed — events are keyed by vault_address in Supabase.
+ */
+export const LEGACY_VAULT_ADDRESSES: Address[] = [
+  '0x8559cd3a74B87C4D10786775320462F6a7F9ABb6',
+  '0x335339161E31fD94fF5A5d0595eC7526AFe9373F',
+];
+
+/** Vaults included in the History Global feed (live + prior demos). */
+export const HISTORY_VAULT_ADDRESSES: Address[] = [VAULT_ADDRESS, ...LEGACY_VAULT_ADDRESSES];
+
+/** Sepolia deployment block of the live vault (RPC history fallback). */
+export const VAULT_DEPLOYMENT_BLOCK = 11_625_426n;
 
 /** ConfidentialVaultSource adapter (Morpho/Zama batchers + demo rateBps pot). */
 export const YIELD_VAULT_ADDRESS = envAddress(
   import.meta.env.VITE_YIELD_VAULT_ADDRESS,
-  '0xf0150cC2297065f28f41D9cf481F3aE9D6028923',
+  '0x89A3F09Cc68d89b6825C74392B7563318CcF22D3',
 );
 
 export const YIELD_VAULT_CONFIGURED =
@@ -171,14 +186,14 @@ export const VAULT_ABI = [
   },
   {
     type: 'function',
-    name: 'nextOpenableAt',
+    name: 'nextRoundAt',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'uint40' }],
   },
   {
     type: 'function',
-    name: 'drawCount',
+    name: 'roundCount',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'uint32' }],
@@ -304,7 +319,7 @@ export const VAULT_ABI = [
   },
   {
     type: 'function',
-    name: 'drawAt',
+    name: 'roundAt',
     stateMutability: 'view',
     inputs: [{ name: 'drawId', type: 'uint32' }],
     outputs: [
@@ -346,14 +361,14 @@ export const VAULT_ABI = [
   },
   {
     type: 'function',
-    name: 'openDraw',
+    name: 'beginRound',
     stateMutability: 'nonpayable',
     inputs: [],
     outputs: [{ type: 'uint32' }],
   },
   {
     type: 'function',
-    name: 'revealDraw',
+    name: 'unsealRound',
     stateMutability: 'nonpayable',
     inputs: [
       { name: 'drawId', type: 'uint32' },
@@ -364,14 +379,14 @@ export const VAULT_ABI = [
   },
   {
     type: 'function',
-    name: 'cancelDraw',
+    name: 'abandonRound',
     stateMutability: 'nonpayable',
     inputs: [{ name: 'drawId', type: 'uint32' }],
     outputs: [],
   },
   {
     type: 'function',
-    name: 'accrue',
+    name: 'scoreEntrant',
     stateMutability: 'nonpayable',
     inputs: [
       { name: 'user', type: 'address' },
@@ -381,7 +396,7 @@ export const VAULT_ABI = [
   },
   {
     type: 'function',
-    name: 'accrueMany',
+    name: 'scoreEntrants',
     stateMutability: 'nonpayable',
     inputs: [
       { name: 'users', type: 'address[]' },
@@ -435,7 +450,7 @@ export const VAULT_ABI = [
   },
   {
     type: 'event',
-    name: 'DrawOpened',
+    name: 'RoundBegan',
     inputs: [
       { name: 'drawId', type: 'uint32', indexed: true },
       { name: 'periodStart', type: 'uint40', indexed: false },
@@ -444,7 +459,7 @@ export const VAULT_ABI = [
   },
   {
     type: 'event',
-    name: 'DrawRevealed',
+    name: 'RoundUnsealed',
     inputs: [
       { name: 'drawId', type: 'uint32', indexed: true },
       { name: 'r', type: 'uint64', indexed: false },
@@ -453,7 +468,7 @@ export const VAULT_ABI = [
   },
   {
     type: 'event',
-    name: 'Accrued',
+    name: 'EntrantScored',
     inputs: [
       { name: 'account', type: 'address', indexed: true },
       { name: 'drawId', type: 'uint32', indexed: true },

@@ -102,13 +102,13 @@ export async function publicDecryptHandle(
 export type PublicDecryptManyResult = {
   /** Clear values in the same order as `handles`. */
   values: bigint[];
-  /** ABI-encoded cleartexts for `FHE.checkSignatures` / `revealDraw`. */
+  /** ABI-encoded cleartexts for `FHE.checkSignatures` / `unsealRound`. */
   cleartexts: Hex;
   decryptionProof: Hex;
 };
 
 /**
- * Public-decrypt several handles in one KMS call (needed for revealDraw: R + totalWeight).
+ * Public-decrypt several handles in one KMS call (needed for unsealRound: R + totalWeight).
  */
 export async function publicDecryptHandles(
   sdk: ZamaSDK,

@@ -20,8 +20,9 @@ export type TxAction =
   | 'withdraw'
   | 'claim'
   | 'fundReserve'
-  | 'openDraw'
-  | 'accrue'
+  | 'beginRound'
+  | 'unsealRound'
+  | 'scoreEntrant'
   | 'harvest'
   | 'reveal'
   | 'setRevealThreshold';

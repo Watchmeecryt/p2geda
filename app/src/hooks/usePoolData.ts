@@ -56,8 +56,8 @@ export function usePoolStats(): PoolStats {
       { ...VAULT_CONTRACT, functionName: 'owner' },
       { ...VAULT_CONTRACT, functionName: 'minPeriod' },
       { ...VAULT_CONTRACT, functionName: 'genesis' },
-      { ...VAULT_CONTRACT, functionName: 'nextOpenableAt' },
-      { ...VAULT_CONTRACT, functionName: 'drawCount' },
+      { ...VAULT_CONTRACT, functionName: 'nextRoundAt' },
+      { ...VAULT_CONTRACT, functionName: 'roundCount' },
       { ...VAULT_CONTRACT, functionName: 'depositorCount' },
       { ...VAULT_CONTRACT, functionName: 'tiersConfigured' },
       { ...VAULT_CONTRACT, functionName: 'apexPrize' },
@@ -81,7 +81,7 @@ export function usePoolStats(): PoolStats {
 
   const { data: drawData, refetch: refetchDraw } = useReadContract({
     ...VAULT_CONTRACT,
-    functionName: 'drawAt',
+    functionName: 'roundAt',
     args: [currentDrawId > 0 ? currentDrawId : 0],
     query: {
       enabled: currentDrawId > 0,

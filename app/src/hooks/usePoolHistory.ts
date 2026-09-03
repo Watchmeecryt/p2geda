@@ -1,18 +1,21 @@
 import { useQuery } from '@tanstack/react-query';
 import { parseAbiItem, type Address, type Hex, type Log } from 'viem';
 import { useAccount, usePublicClient } from 'wagmi';
-import { VAULT_ADDRESS } from '@/lib/contracts';
+import {
+  HISTORY_VAULT_ADDRESSES,
+  VAULT_ADDRESS,
+  VAULT_DEPLOYMENT_BLOCK,
+} from '@/lib/contracts';
 import { SEPOLIA_CHAIN_ID } from '@/lib/chains';
 import { supabase, supabaseConfigured, type VaultEventRow } from '@/lib/supabase';
-
-/** Block the live V5 vault was deployed in; the RPC fallback starts here. */
-export const VAULT_DEPLOYMENT_BLOCK = 11_117_640n;
 
 /** Public RPCs cap eth_getLogs spans, so the fallback scan is chunked. */
 const LOG_CHUNK = 45_000n;
 
 /** How many rows the activity feed keeps in memory. */
 const FEED_LIMIT = 500;
+
+const HISTORY_VAULT_KEYS = HISTORY_VAULT_ADDRESSES.map((a) => a.toLowerCase());
 
 export type ActivityKind =
   | 'deposit'
@@ -48,7 +51,7 @@ export function usePoolActivity() {
   const publicClient = usePublicClient();
 
   return useQuery({
-    queryKey: ['confipool', 'activity', VAULT_ADDRESS, supabaseConfigured],
+    queryKey: ['confipool', 'activity', HISTORY_VAULT_KEYS.join(','), supabaseConfigured],
     enabled: supabaseConfigured || Boolean(publicClient),
     refetchInterval: 20_000,
     queryFn: async (): Promise<ActivityEvent[]> => {
@@ -74,7 +77,7 @@ async function fetchIndexedActivity(): Promise<ActivityEvent[]> {
     .from('vault_events')
     .select('event_type,account_address,amount_handle,draw_id,tx_hash,log_index,block_number,block_timestamp')
     .eq('chain_id', SEPOLIA_CHAIN_ID)
-    .eq('vault_address', VAULT_ADDRESS.toLowerCase())
+    .in('vault_address', HISTORY_VAULT_KEYS)
     .order('block_number', { ascending: false })
     .order('log_index', { ascending: false })
     .limit(FEED_LIMIT);
@@ -119,10 +122,10 @@ const EVENTS = {
     'event Withdrawn(address indexed account, uint40 timestamp, uint256 observationIndex)',
   ),
   draw: parseAbiItem(
-    'event DrawOpened(uint32 indexed drawId, uint40 periodStart, uint40 snapshotAt)',
+    'event RoundBegan(uint32 indexed drawId, uint40 periodStart, uint40 snapshotAt)',
   ),
   reveal_draw: parseAbiItem(
-    'event DrawRevealed(uint32 indexed drawId, uint64 r, uint128 totalWeight)',
+    'event RoundUnsealed(uint32 indexed drawId, uint64 r, uint128 totalWeight)',
   ),
   claim: parseAbiItem('event PrizeClaimed(address indexed account, bytes32 indexed amountHandle)'),
   reserve: parseAbiItem('event PrizeReserveFunded(bytes32 indexed newReserveHandle)'),
@@ -233,7 +236,7 @@ export function useMyPrizeClaims() {
   const publicClient = usePublicClient();
 
   return useQuery({
-    queryKey: ['confipool', 'prize-claims', VAULT_ADDRESS, address, supabaseConfigured],
+    queryKey: ['confipool', 'prize-claims', HISTORY_VAULT_KEYS.join(','), address, supabaseConfigured],
     enabled: Boolean(address) && (supabaseConfigured || Boolean(publicClient)),
     refetchInterval: 20_000,
     queryFn: async (): Promise<PrizeClaim[]> => {
@@ -283,7 +286,7 @@ async function fetchIndexedClaims(address: Address): Promise<PrizeClaim[]> {
     .from('prize_claims')
     .select('account_address,amount_handle,draw_id,tx_hash,log_index,block_number,block_timestamp')
     .eq('chain_id', SEPOLIA_CHAIN_ID)
-    .eq('vault_address', VAULT_ADDRESS.toLowerCase())
+    .in('vault_address', HISTORY_VAULT_KEYS)
     .eq('account_address', address.toLowerCase())
     .order('block_number', { ascending: false })
     .order('log_index', { ascending: false })

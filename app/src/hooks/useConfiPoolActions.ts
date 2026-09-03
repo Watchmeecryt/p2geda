@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { encodeAbiParameters, keccak256, toBytes, type Hex } from 'viem';
 import { sepolia } from 'viem/chains';
 import { useAccount, useWriteContract } from 'wagmi';
-import { useEncrypt } from '@zama-fhe/react-sdk';
+import { useDecryptPublicValues, useEncrypt } from '@zama-fhe/react-sdk';
 import {
   CUSDC_MOCK_ADDRESS,
   ERC20_ABI,
@@ -12,7 +12,11 @@ import {
   VAULT_ADDRESS,
 } from '@/lib/contracts';
 import { confidentialToUnderlying } from '@/lib/format';
-import { useTxRunner, type TxStep } from './useTxRunner';
+import { useTxRunner, type ReportProgress, type TxStep } from './useTxRunner';
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
 
 const RESERVE_DEPOSIT_TAG = keccak256(toBytes('CONFIPOOL_PRIZE_RESERVE'));
 
@@ -23,6 +27,7 @@ export function useConfiPoolActions() {
   const { address } = useAccount();
   const { writeContractAsync } = useWriteContract();
   const { mutateAsync: encrypt } = useEncrypt();
+  const { mutateAsync: decryptPublicValues } = useDecryptPublicValues();
   const runner = useTxRunner();
 
   const encryptAmount = useCallback(
@@ -205,45 +210,96 @@ export function useConfiPoolActions() {
   );
 
   /** Permissionless: freeze TWAB window + encrypted randomness. */
-  const openDraw = useCallback(
+  const beginRound = useCallback(
     () =>
       runner.run(
-        'openDraw',
+        'beginRound',
         [
           {
-            label: 'Opening the encrypted draw',
+            label: 'Beginning the encrypted round',
             run: () =>
               writeContractAsync({
                 address: VAULT_ADDRESS,
                 abi: VAULT_ABI,
                 chainId: sepolia.id,
-                functionName: 'openDraw',
+                functionName: 'beginRound',
               }),
           },
         ],
-        'Draw opened. The keeper will reveal and accrue Apex / Pulse / Ripple.',
+        'Round began. Next: Unseal R + total weight (anyone can run it).',
       ),
     [runner, writeContractAsync],
   );
 
-  const accrueSelf = useCallback(
-    (drawId: number) =>
+  /**
+   * Public-decrypt encR + encTotalWeight, then post KMS proof onchain.
+   * Permissionless — reviewers run this from the Draws page (no keeper required).
+   */
+  const unsealRound = useCallback(
+    (drawId: number, encR: Hex, encTotalWeight: Hex) =>
       runner.run(
-        'accrue',
+        'unsealRound',
         [
           {
-            label: 'Accruing your tier prizes',
+            label: 'Public-decrypting R + total weight',
+            run: async (report: ReportProgress) => {
+              const attempts = 10;
+              let lastError: unknown;
+              for (let i = 0; i < attempts; i++) {
+                try {
+                  report(
+                    i === 0
+                      ? 'Asking the KMS for a public decrypt…'
+                      : `KMS still catching up — retry ${i + 1}/${attempts}`,
+                  );
+                  const result = await decryptPublicValues([encR, encTotalWeight]);
+                  const cleartexts = result.abiEncodedClearValues;
+                  const decryptionProof = result.decryptionProof;
+                  if (!cleartexts || !decryptionProof) {
+                    throw new Error('Public decrypt returned an incomplete proof.');
+                  }
+                  report('Confirm unsealRound in your wallet');
+                  return writeContractAsync({
+                    address: VAULT_ADDRESS,
+                    abi: VAULT_ABI,
+                    chainId: sepolia.id,
+                    functionName: 'unsealRound',
+                    args: [drawId, cleartexts, decryptionProof],
+                  });
+                } catch (error) {
+                  lastError = error;
+                  if (i < attempts - 1) await sleep(2_500);
+                }
+              }
+              throw lastError instanceof Error
+                ? lastError
+                : new Error('Public decrypt failed after several attempts.');
+            },
+          },
+        ],
+        'Round unsealed. Next: Score your Apex / Pulse / Ripple prizes.',
+      ),
+    [runner, writeContractAsync, decryptPublicValues],
+  );
+
+  const scoreSelf = useCallback(
+    (drawId: number) =>
+      runner.run(
+        'scoreEntrant',
+        [
+          {
+            label: 'Scoring your tier prizes',
             run: () =>
               writeContractAsync({
                 address: VAULT_ADDRESS,
                 abi: VAULT_ABI,
                 chainId: sepolia.id,
-                functionName: 'accrue',
+                functionName: 'scoreEntrant',
                 args: [requireAddress(), drawId],
               }),
           },
         ],
-        'Accrual done. Decrypt your claimable balance to see if you won.',
+        'Scored. Decrypt claimable to see if you won — next round opens after minPeriod (~2 min).',
       ),
     [runner, writeContractAsync, requireAddress],
   );
@@ -320,10 +376,14 @@ export function useConfiPoolActions() {
     withdraw,
     claim,
     fundReserve,
-    openDraw,
-    /** @deprecated Prefer openDraw — kept for call sites mid-migration. */
-    triggerDraw: openDraw,
-    accrueSelf,
+    beginRound,
+    /** @deprecated Prefer beginRound. */
+    openDraw: beginRound,
+    triggerDraw: beginRound,
+    unsealRound,
+    scoreSelf,
+    /** @deprecated Prefer scoreSelf. */
+    accrueSelf: scoreSelf,
     harvest,
     requestReveal,
     setMinDrawsBeforePublicReveal,

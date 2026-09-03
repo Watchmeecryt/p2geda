@@ -5,10 +5,10 @@ async function main() {
   const c = await ethers.getContractAt("ConfidentialPrizeVault", v);
   const owner = await c.owner();
   const count = await c.depositorCount();
-  const drawCount = await c.drawCount();
+  const roundCount = await c.roundCount();
   const genesis = await c.genesis();
-  const next = await c.nextOpenableAt();
-  console.log(JSON.stringify({ owner, depositorCount: count.toString(), drawCount: drawCount.toString(), genesis: genesis.toString(), nextOpenableAt: next.toString() }, null, 2));
+  const next = await c.nextRoundAt();
+  console.log(JSON.stringify({ owner, depositorCount: count.toString(), roundCount: roundCount.toString(), genesis: genesis.toString(), nextRoundAt: next.toString() }, null, 2));
 
   const filter = c.filters.Deposited();
   const logs = await c.queryFilter(filter, 11621678, "latest");
