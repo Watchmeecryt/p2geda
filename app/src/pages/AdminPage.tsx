@@ -24,7 +24,7 @@ import { useConfiPoolActions } from '@/hooks/useConfiPoolActions';
 import { useNextOpenRemaining } from '@/hooks/useCountdown';
 import { useIsAdmin, usePoolStats } from '@/hooks/usePoolData';
 import { usePrivateView } from '@/hooks/usePrivateView';
-import { DRAW_STATUS, UNINITIALIZED_HANDLE, VAULT_ABI, VAULT_ADDRESS } from '@/lib/contracts';
+import { UNINITIALIZED_HANDLE, VAULT_ABI, VAULT_ADDRESS } from '@/lib/contracts';
 import { explorerAddressUrl } from '@/lib/chains';
 import { formatConfidential, formatCountdown, shortenAddress } from '@/lib/format';
 

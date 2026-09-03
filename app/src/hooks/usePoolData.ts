@@ -95,18 +95,38 @@ export function usePoolStats(): PoolStats {
   let currentDrawEncR: Hex | undefined;
   let currentDrawEncTotalWeight: Hex | undefined;
   if (drawData && currentDrawId > 0) {
-    const row = drawData as readonly [
-      number | bigint,
-      number | bigint,
-      number,
-      Hex,
-      Hex,
-      number | bigint,
-      number | bigint,
-    ];
-    currentDrawStatus = Number(row[2]);
-    currentDrawEncR = row[3] === UNINITIALIZED_HANDLE ? undefined : row[3];
-    currentDrawEncTotalWeight = row[4] === UNINITIALIZED_HANDLE ? undefined : row[4];
+    const row = drawData as
+      | readonly [
+          number | bigint,
+          number | bigint,
+          number | bigint,
+          Hex,
+          Hex,
+          number | bigint,
+          number | bigint,
+        ]
+      | {
+          periodStart: number | bigint;
+          snapshotAt: number | bigint;
+          status: number | bigint;
+          encR: Hex;
+          encTotalWeight: Hex;
+          r: number | bigint;
+          totalWeight: number | bigint;
+        };
+
+    const status =
+      typeof row === 'object' && row !== null && 'status' in row ? row.status : row[2];
+    const encR =
+      typeof row === 'object' && row !== null && 'encR' in row ? row.encR : row[3];
+    const encTotal =
+      typeof row === 'object' && row !== null && 'encTotalWeight' in row
+        ? row.encTotalWeight
+        : row[4];
+
+    currentDrawStatus = Number(status);
+    currentDrawEncR = encR === UNINITIALIZED_HANDLE ? undefined : encR;
+    currentDrawEncTotalWeight = encTotal === UNINITIALIZED_HANDLE ? undefined : encTotal;
   }
 
   return {

@@ -59,7 +59,9 @@ export function shortenHash(hash: string): string {
 }
 
 export function formatCountdown(seconds: number): string {
-  if (seconds <= 0) return 'ready now';
+  if (!Number.isFinite(seconds) || seconds <= 0) return 'ready now';
+  // Guard against uint40.max / bad targets leaking into the label.
+  if (seconds > 7 * 24 * 3600) return 'awaiting reveal';
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const rest = seconds % 60;
