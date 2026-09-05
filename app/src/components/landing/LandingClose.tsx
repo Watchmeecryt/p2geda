@@ -3,7 +3,9 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import { BrandMark } from '@/components/Brand';
 
-const FOOTER_NAV = [
+type FooterLink = { label: string; to: string } | { label: string; href: string };
+
+const FOOTER_NAV: { title: string; links: FooterLink[] }[] = [
   {
     title: 'Product',
     links: [
@@ -16,6 +18,7 @@ const FOOTER_NAV = [
     title: 'Learn',
     links: [
       { label: 'How it works', href: '#how-it-works' },
+      { label: 'Docs', to: '/app/docs' },
       { label: 'Privacy model', href: '#privacy' },
       { label: 'FAQ', href: '#faq' },
     ],

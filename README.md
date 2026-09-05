@@ -29,6 +29,7 @@ Principal is always yours.
 - [Live Sepolia](#live-sepolia)
 - [Getting started](#getting-started)
 - [Tests](#tests)
+- [In-app docs](#in-app-docs)
 - [Repository layout](#repository-layout)
 - [Mainnet](#mainnet)
 
@@ -293,11 +294,19 @@ The PRN test checks `thresholdOf` against `keccak256(abi.encode(drawId, vault, u
 
 ---
 
+## In-app docs
+
+The dApp left rail has a **Docs** item (`/app/docs`). It is a JSDoc-style handbook: getting started, draw / TWAB / V5 winner math, privacy, keeper, live addresses, and the vault API. Honest about the V5 pieces we did not port.
+
+<p align="right">(<a href="#table-of-contents">back to top</a>)</p>
+
+---
+
 ## Repository layout
 
 | Folder | Role |
 |--------|------|
-| [`app/`](./app) | dApp — Pool, Draws, History, Yield, Admin |
+| [`app/`](./app) | dApp — Pool, Draws, History, Yield, Docs, Admin |
 | [`contracts/`](./contracts) | `ConfidentialPrizeVault`, `ConfidentialVaultSource`, tests |
 | [`indexer/`](./indexer) | Event indexer → Supabase + RelayerNode keeper |
 | [`supabase/`](./supabase) | SQL migrations for activity |

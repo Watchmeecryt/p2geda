@@ -4,6 +4,7 @@ import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   Analytics01Icon,
+  BookOpen01Icon,
   Cancel01Icon,
   ChartIncreaseIcon,
   DiceIcon,
@@ -36,6 +37,13 @@ const YIELD_ITEM: NavItem = {
   hint: 'Mock APR and harvest',
 };
 
+const DOCS_ITEM: NavItem = {
+  to: '/app/docs',
+  label: 'Docs',
+  icon: BookOpen01Icon,
+  hint: 'How the vault works',
+};
+
 const ADMIN_ITEM: NavItem = {
   to: '/app/admin',
   label: 'Admin',
@@ -47,7 +55,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const isAdmin = useIsAdmin();
   const { pathname } = useLocation();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const items = [...NAV, YIELD_ITEM, ...(isAdmin ? [ADMIN_ITEM] : [])];
+  const items = [...NAV, YIELD_ITEM, DOCS_ITEM, ...(isAdmin ? [ADMIN_ITEM] : [])];
 
   useEffect(() => {
     setDrawerOpen(false);

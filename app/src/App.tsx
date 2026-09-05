@@ -6,6 +6,7 @@ import { DrawsPage } from '@/pages/DrawsPage';
 import { HistoryPage } from '@/pages/HistoryPage';
 import { MetricsPage } from '@/pages/MetricsPage';
 import { AdminPage } from '@/pages/AdminPage';
+import { DocsPage } from '@/pages/DocsPage';
 import { YieldPage } from '@/pages/YieldPage';
 
 export default function App() {
@@ -23,6 +24,8 @@ export default function App() {
                 <Route path="history" element={<HistoryPage />} />
                 <Route path="metrics" element={<MetricsPage />} />
                 <Route path="yield" element={<YieldPage />} />
+                <Route path="docs" element={<DocsPage />} />
+                <Route path="docs/:slug" element={<DocsPage />} />
                 <Route path="admin" element={<AdminPage />} />
                 <Route path="*" element={<Navigate to="/app" replace />} />
               </Routes>
