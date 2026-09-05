@@ -14,10 +14,35 @@ Source: https://dev.pooltogether.com/protocol/introduction
 
 Source: https://dev.pooltogether.com/protocol/design/
 
-See full summary in `../../02-POOLTOGETHER-RESEARCH.md`.
-
-Key formulas retained for later comparison to FHE design:
+Key formulas:
 
 - TWAB cumulative: `cum = lastCum + lastBal * (t - lastT)`
-- Average balance between observations from cumulative delta / time delta
-- Winner check (simplified): PRN from keccak(drawId, vault, user, tier, prizeIndex, drawRandomNumber); winning zone from tierOdds × userTwab × vaultPortion
+- Average balance between observations: cumulative delta / time delta
+- Winner check (official):
+
+```text
+PRN = keccak256(abi.encode(drawId, vault, user, tier, prizeIndex, drawRandomNumber))
+winningZone = tierOdds * userTwab * vaultPortion
+userWon = (PRN % vaultTotalAverageSupply) < winningZone
+```
+
+Independent shots per `prizeIndex`. TWAB is measured over a **tier-specific** accrual duration. Adaptive tier count, canary tiers, `4^t` prize counts, and `vaultPortion` (multi-vault liquidity share) are the rest of the hyperstructure.
+
+## ConfiPool vs official
+
+| Piece | Official PT V5 | ConfiPool source (this repo) |
+|-------|----------------|------------------------------|
+| PRN | `keccak256(abi.encode(drawId, vault, user, tier, prizeIndex, R))` | Same encoding |
+| Reduce | `PRN % W` (modulo-bias aware) | Same rejection sampling |
+| Win test | `(PRN % W) < odds × twab × vaultPortion` | `twab > (PRN % W) × k` with `odds = 1/k`, `vaultPortion = 1` |
+| Multi-prize | Independent `prizeIndex` loop, `4^t` shots | Independent `prizeIndex` loop; demo `count = [1,1,1]`, max 4 |
+| Multi-tier | Additive | Additive |
+| Publish `W` | Yes (public TWAB controller) | Yes — `unsealRound` publishes exact `W` |
+| Per-tier TWAB window | Yes | Same last-snapshot → this-snapshot window for all tiers |
+| Adaptive / canary | Yes | No |
+
+ConfiPool source uses the official PRN and independent shots, and publishes `W` the way PT does.
+
+What we still omit on purpose (FHE / single-vault demo): `4^t` adaptive tiers, canary, liquidation/VRGDA claimer, per-tier accrual durations, `vaultPortion`.
+
+See also the README [Winner selection](../../README.md#winner-selection) section.

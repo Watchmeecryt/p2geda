@@ -23,10 +23,12 @@ Principal is always yours.
 - [About](#about)
 - [Built with](#built-with)
 - [How it works](#how-it-works)
+- [Winner selection](#winner-selection)
 - [What stays private](#what-stays-private)
 - [Yield path](#yield-path)
 - [Live Sepolia](#live-sepolia)
 - [Getting started](#getting-started)
+- [Tests](#tests)
 - [Repository layout](#repository-layout)
 - [Mainnet](#mainnet)
 
@@ -60,7 +62,7 @@ Connect on Sepolia → Pool → faucet → wrap → deposit → wait for the hou
 4. **Draw** — After `minPeriod` (120s on this vault):
    - `beginRound()` freezes TWAB weight and draws encrypted `R` + encrypted total weight
    - `unsealRound()` publishes clear `R` and `totalWeight` (KMS signatures) — not your personal weight
-   - `scoreEntrant` / `scoreEntrants` evaluates **Apex / Pulse / Ripple** per depositor against plaintext thresholds from `keccak256(R, drawId, user, tier)`
+   - `scoreEntrant` / `scoreEntrants` evaluates **Apex / Pulse / Ripple independently** (PoolTogether V5 shots) against public thresholds from `keccak256(abi.encode(drawId, vault, user, tier, prizeIndex, R))`
 5. **Claim** — `claim()` confidential-transfers pending credits. Decrypt with EIP-712. Non-winners can still claim (encrypted zero), so the tx does not advertise winners.
 6. **Withdraw** — Encrypted principal out anytime. No lock, no penalty.
 
@@ -88,6 +90,53 @@ depositors ──cUSDC──► prize vault (encrypted balances + TWAB)
 
 ---
 
+## Winner selection
+
+ConfiPool uses the official PoolTogether V5 **per-prize** rule from [protocol design — Winner Eligibility](https://dev.pooltogether.com/protocol/design/).
+
+### Official PoolTogether V5
+
+```text
+PRN = keccak256(abi.encode(drawId, vault, user, tier, prizeIndex, drawRandomNumber))
+winningZone = tierOdds × userTwab × vaultPortion
+userWon = (PRN % vaultTotalAverageSupply) < winningZone
+```
+
+Each `prizeIndex` is an independent shot. Expected prizes in a tier are `twab / W × odds × count`. A saver can win more than one tier in the same draw.
+
+### What this repo does (source)
+
+After `unsealRound` publishes the draw seed `R` and the exact pool TWAB `W`:
+
+```text
+PRN = keccak256(abi.encode(drawId, address(this), user, tier, prizeIndex, R))
+r   = uniform(PRN, W)          // modulo with the same bias rejection PT documents
+threshold = r × tierK[tier]    // odds = 1 / tierK
+won = encryptedTwab > threshold
+```
+
+That is the integer form of `(PRN % W) < (twab / k)` with `vaultPortion = 1`. Encrypted compare never divides the private TWAB.
+
+| Demo default | Meaning |
+|--------------|---------|
+| Tiers | Apex `k=100` prize 100 · Pulse `k=10` prize 25 · Ripple `k=1` prize 5 (6-dec) |
+| Shots | `tierPrizeCount = [1, 1, 1]` — the official `prizeIndex` loop, one shot each |
+| TWAB window | Same last-snapshot → this-snapshot window for every tier (not PT’s per-tier accrual duration) |
+| `vaultPortion` | Always 1 (single vault) |
+| Adaptive / canary / `4^t` | Not ported |
+
+Tiers are **additive**. Winning Apex does not cancel Pulse or Ripple. Claimable can be any subset-sum of the three prizes if the encrypted reserve covers it.
+
+`setTierPrizeCounts` can raise shots per tier (1–4) later. Official PT uses `4^t` shots; we cap at 4 because each shot is an FHE compare.
+
+`unsealRound` publishes exact `W` so anyone can recompute the same plaintext thresholds from the official PRN encoding.
+
+Winner identity is not logged. `scoreEntrant` runs for every depositor; a miss credits encrypted zero.
+
+<p align="right">(<a href="#table-of-contents">back to top</a>)</p>
+
+---
+
 ## What stays private
 
 | Encrypted | How |
@@ -106,7 +155,7 @@ depositors ──cUSDC──► prize vault (encrypted balances + TWAB)
 | Tier sizes and `k` | Odds schedule is public |
 | Aggregate prizes paid | Optional, after admin reveal (≥ 5 draws by default) |
 
-Winner selection: `beginRound` uses onchain `FHE.randEuint64()`. After reveal, each account is checked independently. Best tier wins (Apex > Pulse > Ripple). If the reserve cannot cover it, the credit is encrypted zero.
+Winner selection: `beginRound` uses onchain `FHE.randEuint64()`. After reveal, each account is checked with independent PoolTogether V5 shots per tier. Wins add. If the reserve cannot cover the sum, the credit is encrypted zero.
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 
@@ -210,6 +259,35 @@ npm start              # indexer + keeper
 ```
 
 `npm start` is what you want for a demo: History stays current, and the keeper runs rounds about once an hour.
+
+<p align="right">(<a href="#table-of-contents">back to top</a>)</p>
+
+---
+
+## Tests
+
+Vault coverage lives in [`contracts/test/ConfidentialPrizeVault.ts`](./contracts/test/ConfidentialPrizeVault.ts). From `contracts/`:
+
+```bash
+npx hardhat test test/ConfidentialPrizeVault.ts
+```
+
+Last run (compiled 8 Solidity files, evm `cancun`):
+
+```text
+ConfidentialPrizeVault (V5-style TWAB + Apex/Pulse/Ripple)
+  √ records ERC-7984 deposits and lets users decrypt only their vault balance (534ms)
+  √ returns principal and converts encrypted over-withdrawals into zero (222ms)
+  √ opens a TWAB draw after minPeriod and accrues Apex/Pulse/Ripple credits (228ms)
+  √ lets a winner claim an encrypted Ripple/Pulse/Apex credit (314ms)
+  √ matches PoolTogether V5 PRN encoding and independent prizeIndex shots (178ms)
+  √ rejects reserve funding from a non-owner (98ms)
+  √ rejects malformed tier shapes
+
+7 passing (2s)
+```
+
+The PRN test checks `thresholdOf` against `keccak256(abi.encode(drawId, vault, user, tier, prizeIndex, R))` and the same modulo reduction the vault uses.
 
 <p align="right">(<a href="#table-of-contents">back to top</a>)</p>
 

@@ -34,6 +34,8 @@ contract ConfidentialPrizeVault is
     uint8 public constant TIER_APEX = 0;
     uint8 public constant TIER_PULSE = 1;
     uint8 public constant TIER_RIPPLE = 2;
+    /// @notice PoolTogether V5 gives `4^t` shots per tier; we cap FHE compares per saver.
+    uint32 public constant MAX_PRIZES_PER_TIER = 4;
 
     bytes32 public constant RESERVE_DEPOSIT_TAG = keccak256("CONFIPOOL_PRIZE_RESERVE");
 
@@ -87,6 +89,8 @@ contract ConfidentialPrizeVault is
 
     uint64[TIERS] public tierPrize;
     uint128[TIERS] public tierK;
+    /// @notice Independent shots per tier (PoolTogether `prizeIndex` count). Demo default is 1.
+    uint32[TIERS] public tierPrizeCount;
     uint64 public apexPrize;
     bool public tiersConfigured;
 
@@ -311,10 +315,19 @@ contract ConfidentialPrizeVault is
         for (uint8 t = 0; t < TIERS; ++t) {
             tierPrize[t] = prizes[t];
             tierK[t] = k[t];
+            if (tierPrizeCount[t] == 0) tierPrizeCount[t] = 1;
         }
         apexPrize = prizes[TIER_APEX];
         tiersConfigured = true;
         emit TiersConfigured(prizes, k);
+    }
+
+    /// @notice Sets how many independent PoolTogether-style shots each tier offers (1..4).
+    function setTierPrizeCounts(uint32[TIERS] calldata counts) external onlyOwner {
+        for (uint8 t = 0; t < TIERS; ++t) {
+            if (counts[t] == 0 || counts[t] > MAX_PRIZES_PER_TIER) revert BadTierShape();
+            tierPrizeCount[t] = counts[t];
+        }
     }
 
     function setMinDrawsBeforePublicReveal(uint256 value) external onlyOwner {
@@ -416,16 +429,41 @@ contract ConfidentialPrizeVault is
         emit RoundAbandoned(drawId, uint40(block.timestamp));
     }
 
-    /// @notice Plaintext per-user threshold for a ConfiPool tier (Apex / Pulse / Ripple).
+    /// @notice Prize-0 threshold (legacy name). Prefer `thresholdOf`.
     function thresholdFor(uint32 drawId, address user, uint8 tier) public view returns (uint128) {
+        return thresholdOf(drawId, user, tier, 0);
+    }
+
+    /// @notice Public PoolTogether V5 winning-zone threshold for one prize index.
+    /// @dev Official rule: `userWon = (PRN % W) < (odds * twab)` with
+    ///      `PRN = keccak256(abi.encode(drawId, vault, user, tier, prizeIndex, R))`
+    ///      and `odds = 1 / tierK`. Encrypted compare is `twab > (PRN % W) * tierK`.
+    function thresholdOf(
+        uint32 drawId,
+        address user,
+        uint8 tier,
+        uint32 prizeIndex
+    ) public view returns (uint128) {
         Draw storage d = _draws[drawId];
         if (d.status != DrawStatus.Revealed) revert DrawNotRevealed();
         if (tier >= TIERS) revert BadTierShape();
-        uint256 upper = uint256(d.totalWeight) * uint256(tierK[tier]);
-        return uint128(_uniform(uint256(keccak256(abi.encode(d.r, drawId, user, tier))), upper));
+        uint32 shots = tierPrizeCount[tier];
+        if (shots == 0) shots = 1;
+        if (prizeIndex >= shots) revert BadTierShape();
+
+        uint256 supply = uint256(d.totalWeight);
+        if (supply == 0) return 0;
+
+        uint256 prn = uint256(
+            keccak256(abi.encode(drawId, address(this), user, tier, prizeIndex, d.r))
+        );
+        uint256 r = _uniform(prn, supply);
+        uint256 threshold = r * uint256(tierK[tier]);
+        if (threshold > type(uint128).max) return type(uint128).max;
+        return uint128(threshold);
     }
 
-    /// @notice Awards Apex / Pulse / Ripple credit for one participant. Permissionless.
+    /// @notice Awards independent Apex / Pulse / Ripple credits (PoolTogether V5 shots).
     function scoreEntrant(address user, uint32 drawId) public {
         Draw storage d = _draws[drawId];
         if (d.status != DrawStatus.Revealed) revert DrawNotRevealed();
@@ -438,12 +476,16 @@ contract ConfidentialPrizeVault is
             _windowStart(user, drawId, d)
         );
 
-        // Evaluate Ripple → Pulse → Apex so the rarest win overrides.
-        euint64 credit = FHE.asEuint64(0);
-        for (uint8 i = TIERS; i > 0; --i) {
-            uint8 t = i - 1;
-            ebool won = FHE.gt(weight, thresholdFor(drawId, user, t));
-            credit = FHE.select(won, FHE.asEuint64(tierPrize[t]), credit);
+        euint64 zero = FHE.asEuint64(0);
+        euint64 credit = zero;
+        for (uint8 t = 0; t < TIERS; ++t) {
+            euint64 prize = FHE.asEuint64(tierPrize[t]);
+            uint32 shots = tierPrizeCount[t];
+            if (shots == 0) shots = 1;
+            for (uint32 idx = 0; idx < shots; ++idx) {
+                ebool won = FHE.gt(weight, thresholdOf(drawId, user, t, idx));
+                credit = FHE.add(credit, FHE.select(won, prize, zero));
+            }
         }
 
         ebool funded = FHE.ge(_reserve, credit);

@@ -26,6 +26,7 @@ interface IConfidentialPrizeVault {
     function setYieldSource(IYieldSource source) external;
     function harvest() external;
     function setTiers(uint64[3] calldata prizes, uint128[3] calldata k) external;
+    function setTierPrizeCounts(uint32[3] calldata counts) external;
     function setMinDrawsBeforePublicReveal(uint256 value) external;
 
     function withdraw(externalEuint64 encryptedAmount, bytes calldata inputProof) external returns (euint64);
@@ -35,6 +36,7 @@ interface IConfidentialPrizeVault {
     function unsealRound(uint32 drawId, bytes calldata cleartexts, bytes calldata decryptionProof) external;
     function abandonRound(uint32 drawId) external;
     function thresholdFor(uint32 drawId, address user, uint8 tier) external view returns (uint128);
+    function thresholdOf(uint32 drawId, address user, uint8 tier, uint32 prizeIndex) external view returns (uint128);
     function scoreEntrant(address user, uint32 drawId) external;
     function scoreEntrants(address[] calldata users, uint32 drawId) external;
     function requestTotalPrizesPaidReveal() external returns (bytes32);

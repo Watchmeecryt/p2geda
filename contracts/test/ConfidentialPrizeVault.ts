@@ -18,6 +18,28 @@ const MIN_PERIOD = 60;
 const TIER_PRIZES: [bigint, bigint, bigint] = [100n * UNIT, 25n * UNIT, 5n * UNIT];
 const TIER_K: [bigint, bigint, bigint] = [100n, 10n, 1n];
 
+/** Independent shots can stack, so claimable is any subset-sum of the three prizes. */
+function allowedTierSums() {
+  const [apex, pulse, ripple] = TIER_PRIZES;
+  return new Set(
+    [0n, apex, pulse, ripple, apex + pulse, apex + ripple, pulse + ripple, apex + pulse + ripple].map(
+      String,
+    ),
+  );
+}
+
+/** Same rejection-sampling reduce as `ConfidentialPrizeVault._uniform`. */
+function uniformMod(entropy: bigint, upperBound: bigint): bigint {
+  if (upperBound === 0n) return 0n;
+  const max = (1n << 256n) - 1n;
+  const min = (max - upperBound + 1n) % upperBound;
+  let random = entropy;
+  while (random < min) {
+    random = BigInt(Ethers.keccak256(Ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [random])));
+  }
+  return random % upperBound;
+}
+
 async function encrypt64(contract: string, signer: HardhatEthersSigner, value: bigint) {
   const input = fhevm.createEncryptedInput(contract, signer.address);
   input.add64(value);
@@ -255,7 +277,7 @@ describe("ConfidentialPrizeVault (V5-style TWAB + Apex/Pulse/Ripple)", function 
 
     const alicePrize = await claimable(alice);
     const bobPrize = await claimable(bob);
-    const allowed = new Set(TIER_PRIZES.map(String).concat(["0"]));
+    const allowed = allowedTierSums();
     expect(allowed.has(alicePrize.toString())).to.equal(true);
     expect(allowed.has(bobPrize.toString())).to.equal(true);
 
@@ -316,6 +338,53 @@ describe("ConfidentialPrizeVault (V5-style TWAB + Apex/Pulse/Ripple)", function 
     await (await vault.connect(winner).claim()).wait();
     expect(await claimable(winner)).to.equal(0n);
     expect(await tokenBalance(winner)).to.equal(before + winAmount);
+  });
+
+  it("matches PoolTogether V5 PRN encoding and independent prizeIndex shots", async function () {
+    const {
+      owner,
+      alice,
+      bob,
+      vault,
+      vaultAddress,
+      mintAndWrap,
+      deposit,
+      fundReserve,
+      openAndReveal,
+    } = await deployFixture();
+
+    await mintAndWrap(owner, 2_000n * UNIT);
+    await mintAndWrap(alice, 1_000n * UNIT);
+    await mintAndWrap(bob, 1_000n * UNIT);
+    await deposit(alice, 200n * UNIT);
+    await deposit(bob, 300n * UNIT);
+    await fundReserve(500n * UNIT);
+    await time.increase(30);
+
+    const { drawId, r, totalWeight } = await openAndReveal();
+    expect(await vault.tierPrizeCount(0)).to.equal(1n);
+    expect(await vault.thresholdFor(drawId, alice.address, 2)).to.equal(
+      await vault.thresholdOf(drawId, alice.address, 2, 0),
+    );
+
+    const coder = Ethers.AbiCoder.defaultAbiCoder();
+    for (const user of [alice.address, bob.address]) {
+      for (let tier = 0; tier < 3; tier += 1) {
+        const digest = Ethers.keccak256(
+          coder.encode(
+            ["uint32", "address", "address", "uint8", "uint32", "uint64"],
+            [drawId, vaultAddress, user, tier, 0, r],
+          ),
+        );
+        const expected = uniformMod(BigInt(digest), totalWeight) * TIER_K[tier];
+        expect(await vault.thresholdOf(drawId, user, tier, 0)).to.equal(expected);
+      }
+    }
+
+    await expect(vault.thresholdOf(drawId, alice.address, 0, 1)).to.be.revertedWithCustomError(
+      vault,
+      "BadTierShape",
+    );
   });
 
   it("rejects reserve funding from a non-owner", async function () {

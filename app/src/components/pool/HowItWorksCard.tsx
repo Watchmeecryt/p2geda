@@ -75,7 +75,7 @@ export function FheDrawExplainer() {
         <Point
           icon={UserGroupIcon}
           title="Apex / Pulse / Ripple"
-          body="After unseal, the keeper runs scoreEntrants for depositors. Rare Apex, mid Pulse, frequent Ripple — paid from the encrypted reserve if funded."
+          body="After unseal, the keeper runs scoreEntrants. Each saver is checked independently in Apex, Pulse, and Ripple (PoolTogether V5 shots) — paid from the encrypted reserve if funded."
         />
       </div>
     </Card>
