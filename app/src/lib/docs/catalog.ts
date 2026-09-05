@@ -5,6 +5,7 @@ import {
   Clock01Icon,
   CodeIcon,
   DiceIcon,
+  Key01Icon,
   GiftIcon,
   HelpCircleIcon,
   SafeIcon,
@@ -22,6 +23,7 @@ export type DocPageId =
   | 'what-is-confipool'
   | 'try-sepolia'
   | 'how-a-draw-works'
+  | 'randomness'
   | 'time-weighted-balance'
   | 'winner-selection'
   | 'prizes-and-tiers'
@@ -76,6 +78,12 @@ export const DOC_GROUPS: DocGroup[] = [
         title: 'How a draw works',
         blurb: 'beginRound, unsealRound, scoreEntrant, claim.',
         icon: DiceIcon,
+      },
+      {
+        id: 'randomness',
+        title: 'Randomness',
+        blurb: 'Onchain FHE.rand, unseal, then the V5 seed.',
+        icon: Key01Icon,
       },
       {
         id: 'time-weighted-balance',

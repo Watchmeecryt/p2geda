@@ -132,7 +132,8 @@ function HowDraw() {
         <code>minPeriod</code> is immutable on the vault. The live Sepolia vault is 3600 seconds
         (one hour). <code>beginRound</code> reverts <code>TooSoon</code> until{' '}
         <code>lastSnapshot + minPeriod</code>. An open round that never unseals can be{' '}
-        <code>abandonRound</code> after 24 hours so the pool cannot brick.
+        <code>abandonRound</code> after 24 hours so the pool cannot brick. Where the seed comes
+        from is <DocA to="/app/docs/randomness">Randomness</DocA>.
       </DocP>
       <DocCallout tone="honest" title="Same window, all tiers">
         <DocP>
@@ -141,6 +142,100 @@ function HowDraw() {
           in <DocA to="/app/docs/time-weighted-balance">Time-weighted balance</DocA>.
         </DocP>
       </DocCallout>
+    </>
+  );
+}
+
+function Randomness() {
+  return (
+    <>
+      <DocLead>
+        The draw seed is not a keeper number, not a wallet signature, and not Chainlink VRF.
+        It is <code>FHE.randEuint64()</code> sampled onchain in the same transaction that
+        freezes the TWAB window. Nobody sees it until KMS public-decrypt, and by then weights
+        cannot change.
+      </DocLead>
+
+      <DocH2>Why this shape</DocH2>
+      <DocP>
+        Official PoolTogether V5 often sources <code>drawRandomNumber</code> from an RNG auction
+        (Witnet, VRF, …). ConfiPool is a confidential vault: the bounty and the Zama stack want
+        randomness that is <strong>encrypted at birth</strong> and generated{' '}
+        <strong>inside a transaction</strong>. Zama’s rule:{' '}
+        <code>FHE.rand*</code> updates PRNG state onchain. You cannot sample it with{' '}
+        <code>eth_call</code>. Source:{' '}
+        <DocA href="https://docs.zama.org/protocol/solidity-guides/smart-contract/operations/random">
+          Zama — random number generation
+        </DocA>
+        .
+      </DocP>
+
+      <DocH2>Step 1 — sample, still encrypted</DocH2>
+      <DocPre>{`euint64 r = FHE.randEuint64();
+FHE.makePubliclyDecryptable(r);
+FHE.makePubliclyDecryptable(totalWeight);`}</DocPre>
+      <DocP>
+        That sits in <code>beginRound</code> next to the window freeze. One tx does both, so a
+        caller cannot freeze yesterday’s weights and attach a seed they already peeked at. The
+        handle <code>encR</code> is stored on the draw. Logs say a round opened. They do not
+        print <code>R</code>.
+      </DocP>
+      <DocP>
+        We sample a full <code>euint64</code>, not a power-of-two bound. The bound that matters
+        for fairness is later: each saver’s PRN is reduced with{' '}
+        <code>uniform(PRN, W)</code> (modulo plus bias rejection), which is the V5 squeeze
+        against pool total supply. See{' '}
+        <DocA to="/app/docs/winner-selection">Winner selection</DocA>.
+      </DocP>
+
+      <DocH2>Step 2 — unseal with KMS signatures</DocH2>
+      <DocP>
+        The keeper asks the relayer to public-decrypt <code>encR</code> and{' '}
+        <code>encTotalWeight</code>. It then posts <code>cleartexts</code> and a decryption
+        proof:
+      </DocP>
+      <DocPre>{`FHE.checkSignatures(handles, cleartexts, decryptionProof);
+(uint256 r, uint256 total) = abi.decode(cleartexts, (uint256, uint256));`}</DocPre>
+      <DocP>
+        The vault does not trust the keeper’s integers. If the proof does not match those
+        handles, <code>unsealRound</code> reverts. A keeper that skips unseal leaves the draw
+        <code>Open</code>; after 24 hours anyone may <code>abandonRound</code> so the pool
+        cannot brick. Abandoned rounds do not score.
+      </DocP>
+
+      <DocH2>Step 3 — R becomes the V5 drawRandomNumber</DocH2>
+      <DocPre>{`PRN = keccak256(abi.encode(drawId, vault, user, tier, prizeIndex, R))`}</DocPre>
+      <DocP>
+        Once clear, <code>R</code> is public on purpose. Anyone can recompute every threshold.
+        That does not let them change who won: the TWAB window was frozen at{' '}
+        <code>beginRound</code>, before <code>R</code> was readable. Depositing or withdrawing
+        after unseal does not move this draw’s odometer.
+      </DocP>
+
+      <DocH2>What the keeper cannot do</DocH2>
+      <DocUl>
+        <li>Pick <code>R</code>. The coprocessor samples it in <code>beginRound</code>.</li>
+        <li>Swap in a different cleartext. <code>FHE.checkSignatures</code> binds the proof to the stored handles.</li>
+        <li>Resample after seeing the depositor list. A new <code>R</code> requires a new <code>beginRound</code>, which requires the previous draw revealed or abandoned and <code>minPeriod</code> elapsed — a new window, not a reroll of the last one.</li>
+        <li>Score a subset to hide a winner. Identity is not logged; skipping a saver only delays their credit, it does not change thresholds. The product path scores everyone.</li>
+      </DocUl>
+
+      <DocCallout tone="honest" title="What we are trusting">
+        <DocP>
+          This is Zama fhEVM randomness + KMS public-decrypt, not a second VRF. If the
+          coprocessor or KMS were dishonest, they could bias the encrypted sample or the
+          revealed cleartext. We do not add a committee or commit–reveal on top. Reviewers
+          should treat that as the trust base, same as any other fhEVM app using{' '}
+          <code>FHE.rand*</code>.
+        </DocP>
+      </DocCallout>
+
+      <DocH2>What this is not</DocH2>
+      <DocUl>
+        <li>Not <code>block.prevrandao</code> or a hash of timestamps — those are public before the tx lands.</li>
+        <li>Not an off-chain bot rolling a number and posting it.</li>
+        <li>Not V5’s start-RNG / finish-RNG Dutch auction. We skipped that factory on purpose.</li>
+      </DocUl>
     </>
   );
 }
@@ -233,7 +328,8 @@ won = encryptedTwab > threshold`}</DocPre>
       </DocP>
       <DocP>
         Tests rebuild the official hash in TypeScript and assert it equals <code>thresholdOf</code>.
-        See <DocA to="/app/docs/vault-api">Vault API</DocA> and the README Tests section.
+        See <DocA to="/app/docs/vault-api">Vault API</DocA> and the README Tests section. The seed{' '}
+        <code>R</code> is explained on <DocA to="/app/docs/randomness">Randomness</DocA>.
       </DocP>
     </>
   );
@@ -601,6 +697,12 @@ function Faq() {
         The keeper. The function is permissionless after <code>minPeriod</code>, but the product
         path is keeper-driven.
       </DocP>
+      <DocH3>Who picks the random number?</DocH3>
+      <DocP>
+        Nobody in the product path. <code>FHE.randEuint64()</code> runs inside{' '}
+        <code>beginRound</code>. The keeper only posts KMS signatures to unseal it. See{' '}
+        <DocA to="/app/docs/randomness">Randomness</DocA>.
+      </DocP>
       <DocH3>Why publish W if amounts are private?</DocH3>
       <DocP>
         So anyone can recompute the official V5 thresholds. Per-user weight stays encrypted. See{' '}
@@ -614,6 +716,7 @@ export const DOC_ARTICLES: Record<DocPageId, ReactNode> = {
   'what-is-confipool': <WhatIs />,
   'try-sepolia': <TrySepolia />,
   'how-a-draw-works': <HowDraw />,
+  randomness: <Randomness />,
   'time-weighted-balance': <Twab />,
   'winner-selection': <Winner />,
   'prizes-and-tiers': <Tiers />,
